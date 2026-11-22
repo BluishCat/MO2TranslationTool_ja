@@ -1,4 +1,19 @@
-# MO2 Translation Tool 日本語化・改造版
+# MO2 Translation Tool — Japanese Localization & Modified Version
+
+An unofficial Japanese localization and modified version of the MO2 Translation Tool plugin.
+
+- **Original author:** InfernoKgn
+- **Original Nexus Mods page:** <https://www.nexusmods.com/skyrimspecialedition/mods/197796>
+- **Modified by:** BluishCat
+- **Language:** Japanese
+
+See [README_ja.md](README_ja.md) for installation, usage, changes, and safety notes.
+
+This project is not affiliated with or endorsed by the original author. No separate license is granted by this repository. Please check the original Nexus page for the author's current permissions and distribution terms.
+
+---
+
+## 日本語
 
 MO2 Translation Tool プラグインを日本語化・改造した非公式版です。
 

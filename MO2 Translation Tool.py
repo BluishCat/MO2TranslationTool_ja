@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MO2 Translation Tool — v3.0.1-ja.3（日本語化・改造版）
+MO2 Translation Tool — v3.0.1-ja.4（日本語化・改造版）
 =====================================================
 
 Mod Organizer 2 用の Mod 翻訳プラグイン（LLM / 機械翻訳）。
@@ -291,7 +291,8 @@ def _translation_key_gaps(mod_path, tgt="ja", src="en"):
     return gaps
 
 
-def compute_mod_status(mod_path, mod_name, tgt="ja", src="en", dsd_covered=frozenset(), include_pex=False):
+def compute_mod_status(mod_path, mod_name, tgt="ja", src="en", dsd_covered=frozenset(), include_pex=False,
+                       include_skse_menu=False):
     """Mod の翻訳状態を判定する → (code, detail)。
     code: done=翻訳済み / stale=要再翻訳 / ja=翻訳先言語あり / todo=未翻訳 / none=対象なし"""
     mp = find_manifest(mod_path, mod_name)
@@ -356,6 +357,11 @@ def compute_mod_status(mod_path, mod_name, tgt="ja", src="en", dsd_covered=froze
         gaps = _translation_key_gaps(mod_path, tgt, src)
         if gaps:
             return "todo", "訳ファイルのキー不足: " + ", ".join(f"{r}（{n}）" for r, n in gaps[:3]) + (" …" if len(gaps) > 3 else "")
+        if include_skse_menu:
+            written_n = {os.path.normcase(os.path.normpath(r)) for r in man["written"]}
+            sk_todo, _sk_ja = skse_menu_status(mod_path, tgt, src, written_n)
+            if sk_todo:
+                return "todo", "SKSE メニューが未翻訳: " + ", ".join(sk_todo[:3]) + (" …" if len(sk_todo) > 3 else "")
         if not man["written"]:
             return "done", "確認済み・出力なし（公式レコードの上書きのみ等）"
         return "done", f"{len(man['written'])} ファイル"
@@ -407,6 +413,10 @@ def compute_mod_status(mod_path, mod_name, tgt="ja", src="en", dsd_covered=froze
             elif include_pex and ext == ".pex" and rl == "scripts":
                 if _pex_has_display_text(os.path.join(dp, fn), tgt, src):
                     todo.append(rel)
+    if include_skse_menu:
+        sk_todo, sk_ja = skse_menu_status(mod_path, tgt, src)
+        todo += sk_todo
+        ja_hits += sk_ja
     if todo:
         return "todo", ("一部日本語あり / " if ja_hits else "") + "対象: " + ", ".join(todo[:4]) + (" …" if len(todo) > 4 else "")
     if ja_hits:
@@ -507,7 +517,7 @@ def has_mixed_language(src, dst, target_lang):
 # Константы
 # ============================================================================
 APP_NAME = "MO2 Translation Tool"
-APP_VERSION = "3.0.1-ja.3"
+APP_VERSION = "3.0.1-ja.4"
 CONFIG_NAME = "MO2 Translation Tool.config.json"
 GLOSSARY_NAME = "MO2 Translation Tool.glossary.json"
 
@@ -661,6 +671,14 @@ T = {
                   "OFF: only .strings, Interface/Translations, MCM config.json and DSD for .esp.\n"
                   "ON: also ini / other json / xml and direct .esp editing (may break SPID/KID/FLM, "
                   "SKSE plugin settings, etc.)."),
+    "translate_skse_menu": ("Файлы перевода меню SKSE (SKSE Menu Framework и др.)",
+                            "SKSE menu translation files (SKSE Menu Framework etc.)"),
+    "tip_skse_menu": ("Только проверенные форматы: SKSEMenuFrameworkStrings.json, BFCO NG Language.json, "
+                      "MCM Memory Translation.json, dMenu translations.txt, Skyrim Party Sheet, "
+                      "SKSE/Plugins/*/Translations/en|english.txt.",
+                      "Only verified formats: SKSEMenuFrameworkStrings.json, BFCO NG Language.json, "
+                      "MCM Memory Translation.json, dMenu translations.txt, Skyrim Party Sheet, "
+                      "SKSE/Plugins/*/Translations/en|english.txt."),
     "translate_pex": ("Строки для показа в скриптах (.pex) — экспериментально",
                       "Display strings in scripts (.pex) — experimental"),
     "tip_pex": ("Переводит только строки, передаваемые в функции показа (MCM AddToggleOption и др., "
@@ -802,6 +820,14 @@ T_JA = {
                   ".esp は DSD 形式で出力します。\n"
                   "オン: ini / その他の json / xml も対象にし、.esp を直接書き換えます。"
                   "SPID・KID・FLM の設定や SKSE プラグインの設定値まで翻訳されて壊れるおそれがあります。"),
+    "translate_skse_menu": "SKSE メニュー（SKSE Menu Framework など）の訳ファイルも翻訳する",
+    "tip_skse_menu": ("オンにすると、メニューの文字列を独自の訳ファイルに持つ SKSE プラグインのうち、形式を確認したものだけを翻訳します。\n"
+                      "上書き型（ファイルが 1 つだけ）: SKSE Menu Framework 本体、BFCO NG、MCM Memory、dMenu、Skyrim Party Sheet。"
+                      "値だけを訳し、キー・%d などの書式・アイコン文字・コメントはそのまま残します。"
+                      "「元の Mod フォルダに直接書き込む」では英語版を .bak_en に退避してから上書きします。\n"
+                      "言語ファイル型: SKSE/Plugins/<Mod>/Translations/en.txt・english.txt（Detailed MiniMap、Hotkey Atlas など）。"
+                      "ja.txt / japanese.txt を作り、既にあれば足りないキーだけ追記します（元のファイルは .bak_ja に退避）。\n"
+                      "DLL に直接書かれた文字列は対象外です。"),
     "translate_pex": "スクリプト（.pex）の表示用の文字列も翻訳する（実験的）",
     "tip_pex": ("オンにすると、Scripts フォルダの .pex のうち、表示用の関数に直接渡される英語だけを翻訳します。\n"
                 "対象: MCM の AddToggleOption / AddTextOption / SetInfoText / ShowMessage など、Debug.Notification / MessageBox。\n"
@@ -2488,8 +2514,243 @@ def pex_apply_translations(data, trans_dict, encoding="utf-8"):
 # ============================================================================
 # Сканирование модов
 # ============================================================================
+# ── SKSE メニュー（SKSE Menu Framework / ImGui 系の Mod）の訳ファイル ─────────────────
+# メニューの文字列を DLL ではなく訳ファイルに持つ Mod のうち、形式を確認したものだけを対象にする。
+#   overwrite: ファイルが 1 つだけで、Mod がそれを読む → 値だけ訳して上書き（元は .bak_en）
+#   langfile : 言語ごとのファイル（en.txt / english.txt）→ 翻訳先のファイルを作る。既にあれば足りないキーだけ追記
+SKSE_MENU_RULES = [
+    (re.compile(r"skse/plugins/sksemenuframeworkstrings\.json"), "json", "overwrite"),       # SKSE Menu Framework
+    (re.compile(r"skse/plugins/bfco ng/language\.json"), "json", "overwrite"),               # BFCO NG
+    (re.compile(r"skse/plugins/mcmmemory/translation/translation\.json"), "json", "overwrite"),  # MCM Memory
+    (re.compile(r"skse/plugins/dmenu/translations\.txt"), "kv", "overwrite"),                # dMenu
+    (re.compile(r"skse/plugins/translations/partysheet_en\.txt"), "kv", "overwrite"),        # Skyrim Party Sheet（DLL が _en 固定）
+    (re.compile(r"skse/plugins/[^/]+/translations/(en|english)\.txt"), "kv", "langfile"),    # Detailed MiniMap / Hotkey Atlas
+]
+_SKSE_LANG_NATIVE = {"ja": "日本語", "zh": "中文", "zh-CN": "简体中文", "zh-TW": "繁體中文", "ru": "Русский",
+                     "de": "Deutsch", "fr": "Français", "es": "Español", "it": "Italiano", "pl": "Polski"}
+_SKSE_JSON_LINE_RE = re.compile(r'^(\s*"((?:[^"\\]|\\.)*)"\s*:\s*")((?:[^"\\]|\\.)*)("\s*,?\s*(?://.*)?)$')
+_SKSE_KV_LINE_RE = re.compile(r"^(\s*([^=\t;#\[\s][^=\t]*?)(?:\s*=\s*|\t+\s*))(.*?)(\s*)$")
+# 値の前後にあるアイコン用の私用領域の文字（Font Awesome 等）と空白は訳さずに残す
+_SKSE_AFFIX_RE = re.compile(r"^([\s\ue000-\uf8ff]*)(.*?)([\s\ue000-\uf8ff]*)$", re.S)
+
+
+def skse_menu_rule(rel, src="en"):
+    """rel（Mod 内の相対パス）が対象の訳ファイルなら (形式, 方式)、違えば None。"""
+    if src != "en":
+        return None
+    rl = rel.replace("\\", "/").lower()
+    for rx, fmt, mode in SKSE_MENU_RULES:
+        if rx.fullmatch(rl):
+            return fmt, mode
+    return None
+
+
+def skse_langfile_target_name(fn, tgt="ja"):
+    """en.txt → ja.txt、english.txt → japanese.txt（大文字小文字の書き方は元に合わせる）"""
+    stem, ext = os.path.splitext(fn)
+    new = tgt if len(stem) <= 3 else LANG_SUFFIX.get(tgt, tgt)
+    if stem.isupper():
+        new = new.upper()
+    elif stem[:1].isupper():
+        new = new.capitalize()
+    return new + ext
+
+
+def _skse_read(path):
+    with open(path, "rb") as f:
+        raw = f.read()
+    enc = detect_text_encoding(raw, "utf-8")
+    return raw.decode(enc, errors="replace").lstrip("\ufeff"), enc
+
+
+def _skse_split(value):
+    """値 → (前のアイコン・空白, 訳す部分, 後ろのアイコン・空白)"""
+    m = _SKSE_AFFIX_RE.match(value)
+    return m.groups() if m else ("", value, "")
+
+
+def _skse_translatable(value, tgt="ja", src="en"):
+    core = _skse_split(value)[1]
+    return bool(re.search(r"[A-Za-z]{2,}", core)) and not already_in_target(core, tgt, src)
+
+
+def skse_menu_entries(text, fmt):
+    """訳ファイルの本文 → [(行番号, キー, 値)]。値は json ならデコード済み。コメント行は飛ばす。"""
+    out, in_block = [], False
+    for i, line in enumerate(text.splitlines()):
+        s = line.strip()
+        if fmt == "json":
+            if in_block:
+                if "*/" in s:
+                    in_block = False
+                continue
+            if s.startswith("/*"):
+                in_block = "*/" not in s
+                continue
+            if s.startswith("//"):
+                continue
+            m = _SKSE_JSON_LINE_RE.match(line)
+            if not m:
+                continue
+            try:
+                value = json.loads('"' + m.group(3) + '"')
+                key = json.loads('"' + m.group(2) + '"')
+            except ValueError:
+                continue
+            out.append((i, key, value))
+        else:
+            if not s or s[0] in ";#[" or s.startswith("//"):
+                continue
+            m = _SKSE_KV_LINE_RE.match(line)
+            if m and m.group(3):
+                out.append((i, m.group(2).strip(), m.group(3)))
+    return out
+
+
+def skse_menu_gap(src_path, tgt="ja", src="en"):
+    """langfile: → (翻訳先ファイルのパス or None, 足りないキーの集合 or None)。翻訳先がなければ (None, None)。"""
+    tgt_path = _find_file_ci(os.path.dirname(src_path), skse_langfile_target_name(os.path.basename(src_path), tgt))
+    if not tgt_path:
+        return None, None
+    try:
+        src_text, _e = _skse_read(src_path)
+        tgt_text, _e = _skse_read(tgt_path)
+    except OSError:
+        return None, None
+    have = {k.lower() for _i, k, _v in skse_menu_entries(tgt_text, "kv")}
+    missing = {k.lower() for _i, k, v in skse_menu_entries(src_text, "kv")
+               if k.lower() not in have and _skse_translatable(v, tgt, src)
+               and not (k.lower() == "name" and v.strip().lower() == "english")}
+    return tgt_path, missing
+
+
+def scan_skse_menu_file(full, rel, fmt, mode, tgt="ja", src="en"):
+    """対象の訳ファイル 1 つ → 翻訳ユニットのリスト（kind=skse_kv）。"""
+    text, _enc = _skse_read(full)
+    merge_abs = merge_rel = None
+    missing = None
+    if mode == "langfile":
+        merge_abs, missing = skse_menu_gap(full, tgt, src)
+        if merge_abs:
+            merge_rel = os.path.join(os.path.dirname(rel), os.path.basename(merge_abs)).replace("\\", "/")
+    units = []
+    for i, key, value in skse_menu_entries(text, fmt):
+        if missing is not None and key.lower() not in missing:
+            continue
+        if mode == "langfile" and key.lower() == "name" and value.strip().lower() == "english":
+            continue                      # 言語の一覧に出る名前 → 書き出し時に翻訳先言語の名前にする
+        if not _skse_translatable(value, tgt, src):
+            continue
+        pre, core, post = _skse_split(value)
+        units.append({"rel": rel, "kind": "skse_kv", "src": core, "dst": None, "orig_src": core,
+                      "orig_path": rel, "abs": full, "line": i, "key": key, "raw_value": value,
+                      "affix": [pre, post], "fmt": fmt, "mode": mode,
+                      "merge_abs": merge_abs, "merge_target": merge_rel})
+    return units
+
+
+def _skse_escape(value, fmt):
+    if fmt == "json":
+        return json.dumps(value, ensure_ascii=False)[1:-1]
+    return value.replace("\r\n", "\\n").replace("\n", "\\n")
+
+
+def build_skse_menu_output(us, tgt="ja"):
+    """1 ファイル分の skse_kv ユニット → (出力先 rel, 本文, エンコーディング, 書き込み方式)。
+    書き込み方式: "overwrite"（元を上書き）/ "merge"（既存の翻訳先に追記）/ False（新しいファイル）"""
+    u0 = us[0]
+    fmt, mode = u0["fmt"], u0["mode"]
+    text, enc = _skse_read(u0["abs"])
+    nl = "\r\n" if "\r\n" in text else "\n"
+    trans = {u["line"]: u for u in us}
+
+    def value_of(u):
+        pre, post = u.get("affix") or ["", ""]
+        return pre + (u.get("dst") or u["src"]) + post
+
+    if mode == "langfile" and u0.get("merge_abs"):
+        base, enc = _skse_read(u0["merge_abs"])
+        src_lines = text.splitlines()
+        add = []
+        for u in sorted(us, key=lambda x: x["line"]):
+            m = _SKSE_KV_LINE_RE.match(src_lines[u["line"]]) if u["line"] < len(src_lines) else None
+            if m:
+                add.append(m.group(1).lstrip() + _skse_escape(value_of(u), fmt))
+        return u0["merge_target"], merged_translation_body(base, add, nl) + nl, enc, "merge"
+
+    lines = text.splitlines()
+    rx = _SKSE_JSON_LINE_RE if fmt == "json" else _SKSE_KV_LINE_RE
+    for i, line in enumerate(lines):
+        u = trans.get(i)
+        m = rx.match(line)
+        if not m:
+            continue
+        if u is None:
+            if mode == "langfile" and fmt == "kv" and m.group(2).strip().lower() == "name" \
+                    and m.group(3).strip().lower() == "english":
+                lines[i] = m.group(1) + _SKSE_LANG_NATIVE.get(tgt, LANG_SUFFIX.get(tgt, tgt)) + m.group(4)
+            continue
+        if fmt == "json":
+            try:
+                still = json.loads('"' + m.group(3) + '"') == u["raw_value"]
+            except ValueError:
+                still = False
+        else:
+            still = m.group(3) == u["raw_value"]
+        if still:                         # 収集後にファイルが変わった行は触らない
+            lines[i] = m.group(1) + _skse_escape(value_of(u), fmt) + m.group(4)
+    body = nl.join(lines) + (nl if text.endswith(("\n", "\r")) else "")
+    if mode == "langfile":
+        out_rel = os.path.join(os.path.dirname(u0["rel"]),
+                               skse_langfile_target_name(os.path.basename(u0["rel"]), tgt)).replace("\\", "/")
+        return out_rel, body, enc, False
+    return u0["rel"], body, enc, "overwrite"
+
+
+def skse_menu_status(mod_path, tgt="ja", src="en", written=None):
+    """→ (todo のリスト, 翻訳先言語ありのリスト)。written: このツールが上書き済みのファイル（rel の normcase）"""
+    todo, ja = [], []
+    written = written or set()
+    if src != "en":
+        return todo, ja
+    sk = _find_file_ci(mod_path, "skse")
+    pl = _find_file_ci(sk, "plugins") if sk else None
+    if not pl or not os.path.isdir(pl):
+        return todo, ja
+    for dp, _dirs, fs in os.walk(pl):
+        for fn in fs:
+            full = os.path.join(dp, fn)
+            rel = os.path.relpath(full, mod_path).replace("\\", "/")
+            rule = skse_menu_rule(rel, src)
+            if not rule:
+                continue
+            fmt, mode = rule
+            try:
+                if mode == "overwrite":
+                    if os.path.normcase(os.path.normpath(rel)) in written:
+                        continue
+                    text, _e = _skse_read(full)
+                    if already_in_target(text, tgt, src):
+                        ja.append(rel)
+                    elif any(_skse_translatable(v, tgt, src) for _i, _k, v in skse_menu_entries(text, fmt)):
+                        todo.append(rel)
+                else:
+                    tgt_path, missing = skse_menu_gap(full, tgt, src)
+                    if tgt_path is None:
+                        text, _e = _skse_read(full)
+                        if any(_skse_translatable(v, tgt, src) for _i, _k, v in skse_menu_entries(text, fmt)):
+                            todo.append(rel)
+                    elif missing:
+                        todo.append(f"{rel}（キー不足 {len(missing)}）")
+                    else:
+                        ja.append(os.path.relpath(tgt_path, mod_path).replace("\\", "/"))
+            except OSError:
+                pass
+    return todo, ja
+
+
 def scan_mod_dir(root, extract_bsa, encoding="utf-8", log_func=None, allow_risky=False, cancel=None, src_lang="en",
-                 include_pex=False, tgt_lang="ja"):
+                 include_pex=False, tgt_lang="ja", include_skse_menu=False):
     counts = {"plugins": 0, "strings": 0, "translations": 0, "json": 0, "xml": 0, "ini": 0, "scripts": 0}
     units = []
     root = os.path.abspath(root)
@@ -2508,6 +2769,22 @@ def scan_mod_dir(root, extract_bsa, encoding="utf-8", log_func=None, allow_risky
             rel = fn if rel_dir == "." else f"{rel_dir}/{fn}"
             rel = rel.replace("\\", "/")
 
+            # ── SKSE メニューの訳ファイル（形式を確認したものだけ。汎用の json/txt としては扱わない）──
+            skse_rule = skse_menu_rule(rel, src_lang)
+            if skse_rule:
+                if include_skse_menu:
+                    try:
+                        found = scan_skse_menu_file(full, rel, skse_rule[0], skse_rule[1], tgt_lang, src_lang)
+                    except Exception as e:
+                        found = []
+                        if log_func:
+                            log_func("err", _tx(f"Ошибка чтения {fn}: {e}", f"{fn} の読み込みエラー: {e}"))
+                    if found:
+                        counts["translations"] += 1
+                        units.extend(found)
+                continue
+            if ext == ".txt" and rel_dir.lower().startswith("skse/"):
+                continue    # SKSE プラグインの独自の訳ファイル（上の規則にないもの）は形式が分からないので触らない
             # ── Плагины .esp/.esm/.esl ────────────────────────────────────
             # ゲームが読むのは Mod 直下（= Data 直下）のプラグインだけ。Docs/ の控え等は無視
             if ext in (".esp", ".esm", ".esl") and rel_dir != ".":
@@ -3065,6 +3342,7 @@ DEFAULT_CONFIG = {
     "out_folder": os.path.expanduser("~/Desktop"),
     "out_name": "", "save_zip": True, "save_dsd": True, "allow_risky": False, "per_mod_save": False, "in_place": False,
     "translate_pex": False,
+    "translate_skse_menu": False,
     "status_filter": ["done", "stale", "ja", "todo", "none"], "notify_done": True,
     "batch_size": 1,
 }
@@ -3210,6 +3488,8 @@ class TranslationDialog(QtWidgets.QDialog):
             self.chk_risky.setToolTip(self.tr("tip_risky"))
         if hasattr(self, "chk_pex"):
             self.chk_pex.setToolTip(self.tr("tip_pex"))
+        if hasattr(self, "chk_skse"):
+            self.chk_skse.setToolTip(self.tr("tip_skse_menu"))
         if hasattr(self, "chk_permod"):
             self.chk_permod.setToolTip(self.tr("tip_per_mod"))
         if hasattr(self, "chk_inplace"):
@@ -3274,6 +3554,7 @@ class TranslationDialog(QtWidgets.QDialog):
         self.chk_dsd.setChecked(c.get("save_dsd", True))
         self.chk_risky.setChecked(c.get("allow_risky", False))
         self.chk_pex.setChecked(c.get("translate_pex", False))
+        self.chk_skse.setChecked(c.get("translate_skse_menu", False))
         self.chk_permod.setChecked(c.get("per_mod_save", False))
         self.chk_inplace.setChecked(c.get("in_place", False))
         self.chk_notify.setChecked(c.get("notify_done", True))
@@ -3285,11 +3566,12 @@ class TranslationDialog(QtWidgets.QDialog):
         self.chk_inplace.toggled.connect(self._sync_risky)
         self.chk_risky.toggled.connect(self._sync_risky)
         self.chk_pex.toggled.connect(self._on_pex_toggled)
+        self.chk_skse.toggled.connect(self._on_pex_toggled)
         self._sync_risky()
         self._gloss_reload()
 
     def _on_pex_toggled(self, *_):
-        """.pex を対象にするかで「状態」列の判定が変わるので、判定し直す。"""
+        """.pex / SKSE メニューを対象にするかで「状態」列の判定が変わるので、判定し直す。"""
         if getattr(self, "running", False) or not getattr(self, "mods", None):
             return
         self._compute_statuses()
@@ -3392,6 +3674,7 @@ class TranslationDialog(QtWidgets.QDialog):
         self.chk_report = QtWidgets.QCheckBox()
         self.chk_risky = QtWidgets.QCheckBox()
         self.chk_pex = QtWidgets.QCheckBox()
+        self.chk_skse = QtWidgets.QCheckBox()
 
         for w, k in ((self.chk_units, "convert_units"),
                      (self.chk_delay_l, "delay"),
@@ -3401,7 +3684,8 @@ class TranslationDialog(QtWidgets.QDialog):
                      (self.chk_bsa, "extract_bsa"),
                      (self.chk_report, "gen_report"),
                      (self.chk_risky, "allow_risky"),
-                     (self.chk_pex, "translate_pex")):
+                     (self.chk_pex, "translate_pex"),
+                     (self.chk_skse, "translate_skse_menu")):
             self._tr_lbl(w, k)
 
         gl.addWidget(self.chk_units, 1, 0)
@@ -3416,6 +3700,7 @@ class TranslationDialog(QtWidgets.QDialog):
         gl.addWidget(self.chk_report, 1, 9)
         gl.addWidget(self.chk_risky, 2, 0, 1, 10)
         gl.addWidget(self.chk_pex, 3, 0, 1, 10)
+        gl.addWidget(self.chk_skse, 4, 0, 1, 10)
         root.addWidget(g1)
 
         # ── Панель API ────────────────────────────────────────────────────
@@ -3951,7 +4236,8 @@ class TranslationDialog(QtWidgets.QDialog):
             try:
                 m["status"], m["status_detail"] = compute_mod_status(
                     m["path"], m["name"], tgt, src, self._dsd_covered,
-                    include_pex=self.chk_pex.isChecked())
+                    include_pex=self.chk_pex.isChecked(),
+                    include_skse_menu=self.chk_skse.isChecked())
             except Exception as e:
                 m["status"], m["status_detail"] = "todo", f"判定エラー: {e}"
             if i % 50 == 0:
@@ -4292,7 +4578,8 @@ class TranslationDialog(QtWidgets.QDialog):
         """ワーカースレッドで使う UI の値（GUI スレッドで読む）。"""
         return {"bsa": self.chk_bsa.isChecked(), "enc": self.cb_enc.currentText(),
                 "risky": self.chk_risky.isChecked(), "src": self.cb_src.currentData() or "en",
-                "pex": self.chk_pex.isChecked(), "tgt": self.cb_tgt.currentData() or "ja"}
+                "pex": self.chk_pex.isChecked(), "tgt": self.cb_tgt.currentData() or "ja",
+                "skse": self.chk_skse.isChecked()}
 
     def _load_mod_preview(self, mod):
         # Блокируем кнопки на время сканирования
@@ -4389,7 +4676,8 @@ class TranslationDialog(QtWidgets.QDialog):
                     temp_dir, self.chk_bsa.isChecked(), self.cb_enc.currentText(),
                     lambda lvl, msg: self._log(lvl, f"[{nm}] {msg}"),
                     allow_risky=self.chk_risky.isChecked(), src_lang=self.cb_src.currentData() or "en",
-                    include_pex=self.chk_pex.isChecked(), tgt_lang=self.cb_tgt.currentData() or "ja"
+                    include_pex=self.chk_pex.isChecked(), tgt_lang=self.cb_tgt.currentData() or "ja",
+                    include_skse_menu=self.chk_skse.isChecked()
                 )
                 
                 for u in scanned:
@@ -4410,7 +4698,7 @@ class TranslationDialog(QtWidgets.QDialog):
                             su["temp_path"] = u["path"]
                             if "orig_src" not in su: su["orig_src"] = su.get("src", "")
                             units.append(su)
-                    elif u["kind"] in ("strings", "esp_string", "json_kv", "pex_string"):
+                    elif u["kind"] in ("strings", "esp_string", "json_kv", "pex_string", "skse_kv"):
                         units.append(u)
                         
             except Exception as e:
@@ -4574,6 +4862,7 @@ class TranslationDialog(QtWidgets.QDialog):
             "save_dsd": self.chk_dsd.isChecked(),
             "allow_risky": self.chk_risky.isChecked(),
             "translate_pex": self.chk_pex.isChecked(),
+            "translate_skse_menu": self.chk_skse.isChecked(),
             "per_mod_save": self.chk_permod.isChecked(),
             "in_place": self.chk_inplace.isChecked(),
             "status_filter": sorted(self._shown_states()),
@@ -4745,7 +5034,8 @@ class TranslationDialog(QtWidgets.QDialog):
                             lambda lvl, msg: self.q.put(("log", lvl, f"[{m['name']}] {msg}")),
                             allow_risky=allow_risky, cancel=self.cancel_ev,
                             src_lang=_so.get("src", "en"),
-                            include_pex=_so.get("pex", False), tgt_lang=_so.get("tgt", "ja"))
+                            include_pex=_so.get("pex", False), tgt_lang=_so.get("tgt", "ja"),
+                            include_skse_menu=_so.get("skse", False))
                     except Exception as e:
                         self.q.put(("log", "err", f"{m['name']}: {e}"))
                         continue
@@ -4824,7 +5114,7 @@ class TranslationDialog(QtWidgets.QDialog):
                                             "kind": "txt_line", "src": ln,
                                             "dst": None, "orig_src": ln,
                                             "iext": u["iext"]})
-                        elif u["kind"] in ("strings", "json_kv", "esp_string", "pex_string"):
+                        elif u["kind"] in ("strings", "json_kv", "esp_string", "pex_string", "skse_kv"):
                             units.append(u)
 
                     units[mod_start:] = self._merge_existing_translations(
@@ -4847,7 +5137,8 @@ class TranslationDialog(QtWidgets.QDialog):
                     mod["path"], opts["bsa"], enc,
                     lambda lvl, msg: self.q.put(("log", lvl, f"[{mod['name']}] {msg}")),
                     allow_risky=opts["risky"], cancel=self.cancel_ev, src_lang=opts["src"],
-                    include_pex=opts.get("pex", False), tgt_lang=opts.get("tgt", "ja")
+                    include_pex=opts.get("pex", False), tgt_lang=opts.get("tgt", "ja"),
+                    include_skse_menu=opts.get("skse", False)
                 )
             except Exception as e:
                 self.q.put(("log", "err", f"{mod['name']}: {e}"))
@@ -4916,7 +5207,7 @@ class TranslationDialog(QtWidgets.QDialog):
                                     units.append({"mod": mod["name"], "rel": u["rel"], "kind": "swf_line", "key": parts[0], "src": parts[1], "dst": None, "orig_src": parts[1], "iext": u["iext"]})
                             elif ln.strip():
                                 units.append({"mod": mod["name"], "rel": u["rel"], "kind": "txt_line", "src": ln, "dst": None, "orig_src": ln, "iext": u["iext"]})
-                elif u["kind"] in ("strings", "json_kv", "esp_string", "pex_string"):
+                elif u["kind"] in ("strings", "json_kv", "esp_string", "pex_string", "skse_kv"):
                     units.append(u)
 
             units = self._merge_existing_translations(units, mod, enc)
@@ -6064,6 +6355,10 @@ class TranslationDialog(QtWidgets.QDialog):
                 elif kind == "pex_string":
                     dests[out_rel] = ("pex", us, "binary")
 
+                elif kind == "skse_kv":
+                    s_rel, s_body, s_enc, s_mode = build_skse_menu_output(us, target_code)
+                    dests[os.path.normpath(s_rel)] = ("text", s_body, s_enc, s_mode)
+
             for out_rel, payload in dests.items():
                 full = os.path.join(out_root, out_rel)
                 try:
@@ -6071,12 +6366,14 @@ class TranslationDialog(QtWidgets.QDialog):
                     ptype = payload[0]
                     pdata = payload[1]
                     enc = payload[2] if len(payload) > 2 else self.cfg["encoding"]
-                    is_merge = ptype == "text" and len(payload) > 3 and payload[3]
+                    text_mode = payload[3] if ptype == "text" and len(payload) > 3 else False
+                    is_merge = bool(text_mode) and text_mode != "overwrite"
+                    is_overwrite = text_mode == "overwrite"
 
                     if inplace and ptype != "esp_string":
                         rel_key = os.path.normcase(os.path.normpath(out_rel))
                         if os.path.exists(full) and rel_key not in ours:
-                            if ptype in ("json", "xml", "ini", "pex") or is_merge:
+                            if ptype in ("json", "xml", "ini", "pex") or is_merge or is_overwrite:
                                 # 元ファイルを上書きする形式: 元の版を .bak_<言語> に退避（既に訳済みなら退避し直さない）
                                 # マージは作者などの翻訳先ファイルに追記するので、翻訳先言語の名前で退避する
                                 bak = f"{full}.bak_{target_code if is_merge else src_code}"
@@ -6088,7 +6385,7 @@ class TranslationDialog(QtWidgets.QDialog):
                                     cur, cur_txt = None, ""
                                 # .pex はバイナリなので文字で判定できない → 退避が既にあれば作り直さない
                                 renew = (not os.path.exists(bak)
-                                         or (ptype not in ("pex", "text")
+                                         or (ptype != "pex" and not is_merge
                                              and not already_in_target(cur_txt, target_code, src_code)))
                                 if cur is not None and renew:
                                     shutil.copy2(full, bak)
@@ -6484,6 +6781,7 @@ class TranslationDialog(QtWidgets.QDialog):
             "save_dsd": self.chk_dsd.isChecked(),
             "allow_risky": self.chk_risky.isChecked(),
             "translate_pex": self.chk_pex.isChecked(),
+            "translate_skse_menu": self.chk_skse.isChecked(),
             "per_mod_save": self.chk_permod.isChecked(),
             "in_place": self.chk_inplace.isChecked(),
             "status_filter": sorted(self._shown_states()),

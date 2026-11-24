@@ -1,4 +1,4 @@
-# MO2 Translation Tool 日本語化・改造版（3.0.1-ja.3）
+# MO2 Translation Tool 日本語化・改造版（3.0.1-ja.4）
 
 Mod Organizer 2 の中で Mod を翻訳するプラグインです。LLM や機械翻訳を使います。
 [InfernoKgn さんの MO2 Translation Tool 3.0.1](https://www.nexusmods.com/skyrimspecialedition/mods/197796) をもとに、日本語 UI の追加、不具合の修正、機能の追加をしました。
@@ -51,6 +51,10 @@ Mod Organizer 2 の中で Mod を翻訳するプラグインです。LLM や機�
   - 「状態」列に「キー不足 N」と表示し、未翻訳として選択の対象になります。
   - 「元の Mod フォルダに直接書き込む」では、元の日本語ファイルを `<名前>.txt.bak_ja` に退避してから追記します。取り消すと元に戻ります。出力フォルダに保存する場合は、追記済みの完全な日本語ファイルを書き出します。
   - 同じキーで英語の文言だけが変わった場合は検出できません。BSA 内の訳ファイルも対象外です。
+- **SKSE メニューの訳ファイル（初期設定はオフ）**：「SKSE メニュー（SKSE Menu Framework など）の訳ファイルも翻訳する」をオンにすると、メニューの文字列を独自の訳ファイルに持つ SKSE プラグインのうち、形式を確認したものだけを翻訳します。
+  - 上書き型（ファイルが 1 つだけ）：SKSE Menu Framework 本体（`SKSEMenuFrameworkStrings.json`）、BFCO NG（`Language.json`）、MCM Memory（`Translation.json`）、dMenu（`translations.txt`）、Skyrim Party Sheet（`PartySheet_en.txt`）。値だけを訳し、キー、`%d` などの書式、アイコン用の文字、コメント、エンコーディング（BOM）はそのまま残します。「元の Mod フォルダに直接書き込む」では英語版を `<名前>.bak_en` に退避してから上書きします。
+  - 言語ファイル型：`SKSE/Plugins/<Mod>/Translations/en.txt`・`english.txt`（Detailed MiniMap、Hotkey Atlas など）。`ja.txt`・`japanese.txt` を作り、既にあれば足りないキーだけ追記します（元のファイルは `.bak_ja` に退避）。
+  - 上記以外の SKSE プラグインの訳ファイルや、DLL に直接書かれた文字列は対象外です。日本語を表示できるかは各 Mod（ImGui）のフォント設定によります。
 - **スクリプト（.pex）の表示用の文字列（実験的・初期設定はオフ）**：「スクリプト（.pex）の表示用の文字列も翻訳する」をオンにすると、Papyrus スクリプトに直接書かれた英語のうち、画面に出るものだけを翻訳します。
   - 対象：MCM の `AddToggleOption` / `AddTextOption` / `AddSliderOption` / `SetInfoText` / `ShowMessage` などと、`Debug.Notification` / `Debug.MessageBox` に渡される文字列です（`"Count: " + n` のような連結も含みます）。
   - 訳文は .pex の文字列表の末尾に追加し、その呼び出し箇所の参照だけを差し替えます。元の英語は残るので、同じ文字列をイベント名・キー・比較に使っている処理には影響しません。

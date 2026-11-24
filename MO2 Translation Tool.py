@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MO2 Translation Tool — v3.0.1-ja.1（日本語化・改造版）
+MO2 Translation Tool — v3.0.1-ja.2（日本語化・改造版）
 =====================================================
 
 Mod Organizer 2 用の Mod 翻訳プラグイン（LLM / 機械翻訳）。
@@ -258,7 +258,40 @@ def _esp_has_text(path, max_size=200 * 1024 * 1024):
         return False
 
 
-def compute_mod_status(mod_path, mod_name, tgt="ja", src="en", dsd_covered=frozenset()):
+def _pex_has_display_text(path, tgt="ja", src="en", max_size=8 * 1024 * 1024):
+    """状態判定用: .pex に翻訳対象の表示用文字列があるか（関数名を含まないファイルは解析しない）。"""
+    try:
+        if os.path.getsize(path) > max_size:
+            return False
+        with open(path, "rb") as f:
+            data = f.read()
+        if not any(k in data for k in (b"Option", b"InfoText", b"TitleText", b"ShowMessage",
+                                        b"Notification", b"MessageBox")):
+            return False
+        return bool(pex_extract_strings(data, "utf-8", tgt, src))
+    except Exception:
+        return False
+
+
+def _translation_key_gaps(mod_path, tgt="ja", src="en"):
+    """Interface/Translations のルーズの英語訳ファイルのうち、翻訳先ファイルにキーが足りないもの → [(rel, 件数)]
+    （ゲームが読むのは Interface/Translations 直下だけなので、そこだけ見る）"""
+    gaps = []
+    iface = _find_file_ci(mod_path, "interface")
+    tdir = _find_file_ci(iface, "translations") if iface else None
+    if not tdir or not os.path.isdir(tdir):
+        return gaps
+    rel_dir = os.path.relpath(tdir, mod_path).replace("\\", "/")
+    for fn in os.listdir(tdir):
+        if not fn.lower().endswith(".txt") or not is_source_lang_file(fn, src):
+            continue
+        gap_path, _t, missing = translation_gap(os.path.join(tdir, fn), tgt)
+        if gap_path and missing:
+            gaps.append((f"{rel_dir}/{fn}", len(missing)))
+    return gaps
+
+
+def compute_mod_status(mod_path, mod_name, tgt="ja", src="en", dsd_covered=frozenset(), include_pex=False):
     """Mod の翻訳状態を判定する → (code, detail)。
     code: done=翻訳済み / stale=要再翻訳 / ja=翻訳先言語あり / todo=未翻訳 / none=対象なし"""
     mp = find_manifest(mod_path, mod_name)
@@ -310,6 +343,19 @@ def compute_mod_status(mod_path, mod_name, tgt="ja", src="en", dsd_covered=froze
             if changed:
                 parts.append("訳ファイルが変更/消失: " + ", ".join(changed[:3]))
             return "stale", " / ".join(parts)
+        if include_pex and not any(r.lower().endswith(".pex") for r in man["written"]):
+            sdir = os.path.join(mod_path, "Scripts")
+            try:
+                pex_todo = [f"Scripts/{fn}" for fn in os.listdir(sdir)
+                            if fn.lower().endswith(".pex")
+                            and _pex_has_display_text(os.path.join(sdir, fn), tgt, src)]
+            except OSError:
+                pex_todo = []
+            if pex_todo:
+                return "todo", "スクリプトが未翻訳: " + ", ".join(pex_todo[:4]) + (" …" if len(pex_todo) > 4 else "")
+        gaps = _translation_key_gaps(mod_path, tgt, src)
+        if gaps:
+            return "todo", "訳ファイルのキー不足: " + ", ".join(f"{r}（{n}）" for r, n in gaps[:3]) + (" …" if len(gaps) > 3 else "")
         if not man["written"]:
             return "done", "確認済み・出力なし（公式レコードの上書きのみ等）"
         return "done", f"{len(man['written'])} ファイル"
@@ -335,7 +381,10 @@ def compute_mod_status(mod_path, mod_name, tgt="ja", src="en", dsd_covered=froze
                 elif not is_source_lang_file(low, src):
                     pass                      # 他言語の訳ファイル（翻訳元にしない）
                 elif _localize_name(fn, tgt).lower() in names:
-                    pass                      # 対になる翻訳先ファイルが既にある
+                    if is_tr_txt:             # 対になる翻訳先ファイルがある → 足りないキーがあれば対象
+                        gap_path, _t, missing = translation_gap(os.path.join(dp, fn), tgt)
+                        if gap_path and missing:
+                            todo.append(f"{rel}（キー不足 {len(missing)}）")
                 else:
                     todo.append(rel)
             elif low == "config.json" and rl.startswith("mcm/config/"):
@@ -354,6 +403,9 @@ def compute_mod_status(mod_path, mod_name, tgt="ja", src="en", dsd_covered=froze
                 if low in dsd_covered:
                     ja_hits.append(rel + " (DSD)")
                 elif _esp_has_text(os.path.join(dp, fn)):
+                    todo.append(rel)
+            elif include_pex and ext == ".pex" and rl == "scripts":
+                if _pex_has_display_text(os.path.join(dp, fn), tgt, src):
                     todo.append(rel)
     if todo:
         return "todo", ("一部日本語あり / " if ja_hits else "") + "対象: " + ", ".join(todo[:4]) + (" …" if len(todo) > 4 else "")
@@ -425,7 +477,7 @@ def has_missing_placeholders(src, dst):
 # ── Валидатор длины строки (MCM / XML / JSON интерфейсы) ───────────────────
 LEN_LIMIT_RATIO = 1.4      # перевод длиннее оригинала на 40% и более
 LEN_MIN_SRC = 3            # для совсем коротких строк сравнение бессмысленно
-UI_LEN_EXTS = (".json", ".xml")
+UI_LEN_EXTS = (".json", ".xml", ".pex")
 
 def is_ui_length_file(rel):
     """Файл интерфейса (MCM-конфиг, XML-меню), где длина строки критична."""
@@ -455,7 +507,7 @@ def has_mixed_language(src, dst, target_lang):
 # Константы
 # ============================================================================
 APP_NAME = "MO2 Translation Tool"
-APP_VERSION = "3.0.1-ja.1"
+APP_VERSION = "3.0.1-ja.2"
 CONFIG_NAME = "MO2 Translation Tool.config.json"
 GLOSSARY_NAME = "MO2 Translation Tool.glossary.json"
 
@@ -609,6 +661,12 @@ T = {
                   "OFF: only .strings, Interface/Translations, MCM config.json and DSD for .esp.\n"
                   "ON: also ini / other json / xml and direct .esp editing (may break SPID/KID/FLM, "
                   "SKSE plugin settings, etc.)."),
+    "translate_pex": ("Строки для показа в скриптах (.pex) — экспериментально",
+                      "Display strings in scripts (.pex) — experimental"),
+    "tip_pex": ("Переводит только строки, передаваемые в функции показа (MCM AddToggleOption и др., "
+                "Debug.Notification / MessageBox). Перевод добавляется в таблицу строк, оригинал остаётся.",
+                "Translates only string literals passed to display functions (MCM AddToggleOption etc., "
+                "Debug.Notification / MessageBox). Translations are appended; original strings stay intact."),
 }
 
 # ── 日本語 UI ─────────────────────────────────────────────────────────────
@@ -744,6 +802,13 @@ T_JA = {
                   ".esp は DSD 形式で出力します。\n"
                   "オン: ini / その他の json / xml も対象にし、.esp を直接書き換えます。"
                   "SPID・KID・FLM の設定や SKSE プラグインの設定値まで翻訳されて壊れるおそれがあります。"),
+    "translate_pex": "スクリプト（.pex）の表示用の文字列も翻訳する（実験的）",
+    "tip_pex": ("オンにすると、Scripts フォルダの .pex のうち、表示用の関数に直接渡される英語だけを翻訳します。\n"
+                "対象: MCM の AddToggleOption / AddTextOption / SetInfoText / ShowMessage など、Debug.Notification / MessageBox。\n"
+                "訳文は文字列表の末尾に追加し、その呼び出し箇所だけを差し替えます。元の英語は残るので、"
+                "同じ文字列を比較やキーに使っている処理には影響しません。\n"
+                "ページ名・配列（メニューの選択肢）・変数を経由する文字列は訳しません。BSA 内の .pex も対象外です。\n"
+                "「元の Mod フォルダに直接書き込む」では英語版を .pex.bak_en に退避してから上書きします。"),
 }
 
 ALL_FILES_LABELS = ("Все файлы", "All files", "すべてのファイル")
@@ -1426,7 +1491,7 @@ class Translator:
 
     # Уточняющие контекстные инструкции; порядок = приоритет (первое совпадение).
     _CTX_RULES = [
-        (("mcm", ".json", ".xml"),
+        (("mcm", ".json", ".xml", ".pex"),
          "Context: This is a UI menu. Keep the translation as short and concise "
          "as possible. Use standard gaming UI terms."),
         (("info", "qust", "quest"),
@@ -2109,11 +2174,323 @@ class EspStringExtractor:
         return None
 
 
+# ── Papyrus スクリプト（.pex）内の表示用文字列 ─────────────────────────────
+# .pex の文字列表は、画面に出す文字列とイベント名・キー・比較用の文字列を共有している。
+# 表をそのまま書き換えると壊れるので、次の方式にする:
+#   1. 表示用の関数（MCM の AddToggleOption など）に渡される文字列の「使用箇所」だけを探す
+#   2. 訳文は文字列表の末尾に追加し、その使用箇所の参照番号だけを差し替える
+# 元の文字列は残るので、同じ文字列を比較やキーに使っている箇所には影響しない。
+
+class PexError(Exception):
+    pass
+
+
+# SkyUI SKI_ConfigBase / Debug の関数名 → 表示用の引数位置（0 始まり、self は含まない）
+PEX_DISPLAY_METHODS = {
+    "addheaderoption": (0,),
+    "addtextoption": (0, 1),
+    "addtoggleoption": (0,),
+    "addslideroption": (0, 2),
+    "addmenuoption": (0, 1),
+    "addcoloroption": (0,),
+    "addkeymapoption": (0,),
+    "addinputoption": (0, 1),
+    "addtextoptionst": (1, 2),
+    "addtoggleoptionst": (1,),
+    "addslideroptionst": (1, 3),
+    "addmenuoptionst": (1, 2),
+    "addcoloroptionst": (1,),
+    "addkeymapoptionst": (1,),
+    "addinputoptionst": (1, 2),
+    "settextoptionvalue": (1,),
+    "setslideroptionvalue": (2,),
+    "setmenuoptionvalue": (1,),
+    "setinputoptionvalue": (1,),
+    "settextoptionvaluest": (0,),
+    "setslideroptionvaluest": (1,),
+    "setmenuoptionvaluest": (0,),
+    "setinputoptionvaluest": (0,),
+    "setinfotext": (0,),
+    "settitletext": (0,),
+    "showmessage": (0, 2, 3),
+}
+PEX_DISPLAY_STATICS = {
+    ("debug", "notification"): (0,),
+    ("debug", "messagebox"): (0,),
+}
+
+# Skyrim のオペコード → 固定引数の数（23-25 は可変長引数つき）
+_PEX_OP_ARGS = {
+    0: 0, 1: 3, 2: 3, 3: 3, 4: 3, 5: 3, 6: 3, 7: 3, 8: 3, 9: 3,
+    10: 2, 11: 2, 12: 2, 13: 2, 14: 2,
+    15: 3, 16: 3, 17: 3, 18: 3, 19: 3,
+    20: 1, 21: 2, 22: 2,
+    23: 3, 24: 2, 25: 3,
+    26: 1, 27: 3, 28: 3, 29: 3,
+    30: 2, 31: 2, 32: 3, 33: 3, 34: 4, 35: 4,
+}
+_PEX_VARARG_OPS = (23, 24, 25)
+_PEX_JUMP_OPS = (20, 21, 22)
+# 書き込み先（dest）になる引数の位置
+_PEX_DEST_ARG = {op: 0 for op in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+                                    15, 16, 17, 18, 19, 27, 30, 31, 32)}
+_PEX_DEST_ARG.update({23: 2, 24: 1, 25: 2, 28: 2, 34: 1, 35: 1})
+_PEX_OP_ASSIGN, _PEX_OP_CAST, _PEX_OP_STRCAT = 13, 14, 27
+
+
+class _PexReader:
+    """Skyrim の .pex（ビッグエンディアン）を読む。"""
+
+    def __init__(self, data):
+        self.d = data
+        self.p = 0
+
+    def take(self, fmt):
+        v = struct.unpack_from(">" + fmt, self.d, self.p)
+        self.p += struct.calcsize(">" + fmt)
+        return v[0]
+
+    def wstring(self):
+        n = self.take("H")
+        s = self.d[self.p:self.p + n]
+        if len(s) != n:
+            raise PexError("文字列が途中で切れています")
+        self.p += n
+        return s
+
+    def vardata(self):
+        t = self.take("B")
+        off = self.p + 0
+        if t == 0:
+            return (0, None, off)
+        if t in (1, 2):
+            return (t, self.take("H"), off)
+        if t == 3:
+            return (t, self.take("i"), off)
+        if t == 4:
+            return (t, self.take("f"), off)
+        if t == 5:
+            return (t, self.take("B"), off)
+        raise PexError(f"不明な値の型 {t}（位置 {self.p - 1}）")
+
+    def function(self, out):
+        self.take("H"); self.take("H"); self.take("I"); self.take("B")   # 戻り値型・説明・フラグ
+        for _ in range(self.take("H") * 2):                             # 引数（名前, 型）
+            self.take("H")
+        for _ in range(self.take("H") * 2):                             # ローカル変数（名前, 型）
+            self.take("H")
+        code = []
+        for _ in range(self.take("H")):
+            op = self.take("B")
+            if op not in _PEX_OP_ARGS:
+                raise PexError(f"不明なオペコード {op}")
+            args = [self.vardata() for _ in range(_PEX_OP_ARGS[op])]
+            if op in _PEX_VARARG_OPS:
+                cnt = self.vardata()
+                if cnt[0] != 3 or cnt[1] < 0:
+                    raise PexError("可変長引数の数が不正です")
+                args.extend(self.vardata() for _ in range(cnt[1]))
+            code.append((op, args))
+        out.append(code)
+
+
+def pex_parse(data):
+    """→ {"strings": [bytes], "st_start", "st_end", "functions": [[(op, args)]]}
+    args は (型, 値, 値のファイル内位置)。型 1=識別子, 2=文字列（値は文字列表の番号）。"""
+    if data[:4] != b"\xfa\x57\xc0\xde":
+        raise PexError("Skyrim の .pex ではありません")
+    r = _PexReader(data)
+    r.p = 4 + 1 + 1 + 2 + 8
+    for _ in range(3):                    # ソース名・ユーザー名・PC 名
+        r.wstring()
+    st_start = r.p
+    strings = [r.wstring() for _ in range(r.take("H"))]
+    st_end = r.p
+    if r.take("B"):                       # デバッグ情報
+        r.take("Q")
+        for _ in range(r.take("H")):
+            r.take("H"); r.take("H"); r.take("H"); r.take("B")
+            n_lines = r.take("H")         # 先に読む（r.p += r.take() だと読み進めた分が消える）
+            r.p += 2 * n_lines
+    for _ in range(r.take("H")):          # ユーザーフラグ
+        r.take("H"); r.take("B")
+    funcs = []
+    for _ in range(r.take("H")):          # オブジェクト
+        r.take("H"); r.take("I")
+        r.take("H"); r.take("H"); r.take("I"); r.take("H")
+        for _ in range(r.take("H")):      # 変数
+            r.take("H"); r.take("H"); r.take("I"); r.vardata()
+        for _ in range(r.take("H")):      # プロパティ
+            r.take("H"); r.take("H"); r.take("H"); r.take("I")
+            flags = r.take("B")
+            if flags & 4:
+                r.take("H")
+            else:
+                if flags & 1:
+                    r.function(funcs)
+                if flags & 2:
+                    r.function(funcs)
+        for _ in range(r.take("H")):      # ステート
+            r.take("H")
+            for _ in range(r.take("H")):
+                r.take("H")
+                r.function(funcs)
+    if r.p != len(data):
+        raise PexError(f"解析位置がファイル末尾と一致しません（{r.p} / {len(data)}）")
+    return {"strings": strings, "st_start": st_start, "st_end": st_end, "functions": funcs}
+
+
+def _pex_name(pex, arg):
+    if arg[0] in (1, 2) and arg[1] < len(pex["strings"]):
+        return pex["strings"][arg[1]].decode("ascii", "replace").lower()
+    return ""
+
+
+def _pex_is_temp(pex, arg):
+    return arg[0] == 1 and _pex_name(pex, arg).startswith("::temp")
+
+
+def _pex_trace(pex, code, i, temp, targets, out, depth=0):
+    """code[i] で使われる一時変数 temp の値を遡り、元になった文字列リテラルを out に集める。
+    分岐が絡む・別の命令で作られた値は追わない（安全側）。"""
+    if depth > 16:
+        return
+    k = i - 1
+    while k >= 0:
+        if (k + 1) in targets or code[k][0] in _PEX_JUMP_OPS:
+            return
+        op, args = code[k]
+        di = _PEX_DEST_ARG.get(op)
+        if di is not None and di < len(args) and args[di][0] == 1 and args[di][1] == temp[1]:
+            if op == _PEX_OP_STRCAT:
+                srcs = args[1:3]
+            elif op == _PEX_OP_ASSIGN:
+                srcs = args[1:2]
+            else:
+                return
+            for a in srcs:
+                if a[0] == 2:
+                    out.append(a)
+                elif _pex_is_temp(pex, a):
+                    _pex_trace(pex, code, k, a, targets, out, depth + 1)
+            return
+        k -= 1
+
+
+def pex_display_sites(pex):
+    """表示用の関数に渡される文字列リテラルの使用箇所 → [(文字列表の番号, 値の位置)]"""
+    sites = []
+    for code in pex["functions"]:
+        targets = set()
+        for idx, (op, args) in enumerate(code):
+            if op in _PEX_JUMP_OPS:
+                off = args[0] if op == 20 else args[1]
+                if off[0] == 3:
+                    targets.add(idx + off[1])
+        for idx, (op, args) in enumerate(code):
+            if op == 23:                        # callmethod 名前, 対象, 戻り先, 引数…
+                positions = PEX_DISPLAY_METHODS.get(_pex_name(pex, args[0]))
+                call_args = args[3:]
+            elif op == 25:                      # callstatic 型, 名前, 戻り先, 引数…
+                positions = PEX_DISPLAY_STATICS.get((_pex_name(pex, args[0]), _pex_name(pex, args[1])))
+                call_args = args[3:]
+            else:
+                continue
+            if not positions:
+                continue
+            for pos in positions:
+                if pos >= len(call_args):
+                    continue
+                a = call_args[pos]
+                found = []
+                if a[0] == 2:
+                    found.append(a)
+                elif _pex_is_temp(pex, a):
+                    _pex_trace(pex, code, idx, a, targets, found)
+                sites.extend((f[1], f[2]) for f in found)
+    return sites
+
+
+def _pex_is_display_text(s, tgt="ja", src="en"):
+    t = s.strip()
+    if not t or t.startswith("$"):
+        return False                      # 空・$KEY（Translations 側で訳す）
+    if not re.search(r"\s", t) and re.search(r"[a-z][A-Z]|_|\d", t):
+        return False                      # 識別子っぽい（AND_ChestCurtain、SelectShySexInfoText など）
+    if "\\" in t:
+        return False                      # パス（Meshes\Terrain\ など）
+    # タグの断片（<font color='…）・$KEY・{0} を除いて、単語が残るものだけ
+    body = re.sub(r"<[^>]*>|<[^>]*$|^[^<]*?>", " ", t)
+    body = re.sub(r"\$\S+|\{\d*\}", " ", body)
+    if not re.search(r"[A-Za-z]{2,}", body):
+        return False
+    return not already_in_target(t, tgt, src)
+
+
+def pex_extract_strings(data, encoding="utf-8", tgt="ja", src="en"):
+    """表示用の文字列（重複なし）を返す。"""
+    pex = pex_parse(data)
+    seen = []
+    for sidx, _off in pex_display_sites(pex):
+        s = _safe_decode(pex["strings"][sidx], encoding)
+        if s not in seen and _pex_is_display_text(s, tgt, src):
+            seen.append(s)
+    return seen
+
+
+def _pex_encode(text, encoding):
+    """訳文をバイト列にする。指定の文字コードで表せない文字があれば UTF-8（SE の日本語と同じ）にする。"""
+    encs = (encoding,) if (encoding or "").lower() in ("utf-8", "cp1252", "windows-1251") else ()
+    for enc in encs + ("utf-8",):
+        try:
+            return text.encode(enc)
+        except (UnicodeEncodeError, LookupError):
+            continue
+    return None
+
+
+def pex_apply_translations(data, trans_dict, encoding="utf-8"):
+    """表示用の使用箇所だけ訳文に差し替えた .pex を返す → (差し替えた箇所の数, bytes)。"""
+    pex = pex_parse(data)
+    strings = list(pex["strings"])
+    index_of = {}
+    for i, s in enumerate(strings):
+        index_of.setdefault(s, i)
+    buf = bytearray(data)
+    changes = 0
+    for sidx, off in pex_display_sites(pex):
+        src_text = _safe_decode(pex["strings"][sidx], encoding)
+        dst = trans_dict.get(src_text)
+        if not dst or dst == src_text:
+            continue
+        raw = _pex_encode(dst, encoding)
+        if raw is None or len(raw) > 0xFFFF:
+            continue
+        ni = index_of.get(raw)
+        if ni is None:
+            if len(strings) >= 0xFFFF:
+                raise PexError("文字列表が上限（65535 件）に達しました")
+            ni = len(strings)
+            strings.append(raw)
+            index_of[raw] = ni
+        struct.pack_into(">H", buf, off, ni)
+        changes += 1
+    if not changes:
+        return 0, data
+    table = bytearray(struct.pack(">H", len(strings)))
+    for s in strings:
+        table += struct.pack(">H", len(s)) + s
+    out = bytes(buf[:pex["st_start"]]) + bytes(table) + bytes(buf[pex["st_end"]:])
+    pex_parse(out)                        # 書き出す前に、壊れていないか読み直して確認
+    return changes, out
+
+
 # ============================================================================
 # Сканирование модов
 # ============================================================================
-def scan_mod_dir(root, extract_bsa, encoding="utf-8", log_func=None, allow_risky=False, cancel=None, src_lang="en"):
-    counts = {"plugins": 0, "strings": 0, "translations": 0, "json": 0, "xml": 0, "ini": 0}
+def scan_mod_dir(root, extract_bsa, encoding="utf-8", log_func=None, allow_risky=False, cancel=None, src_lang="en",
+                 include_pex=False, tgt_lang="ja"):
+    counts = {"plugins": 0, "strings": 0, "translations": 0, "json": 0, "xml": 0, "ini": 0, "scripts": 0}
     units = []
     root = os.path.abspath(root)
 
@@ -2148,6 +2525,27 @@ def scan_mod_dir(root, extract_bsa, encoding="utf-8", log_func=None, allow_risky
                 except Exception as e:
                     if log_func:
                         log_func("err", _tx(f"Ошибка чтения {fn}: {e}", f"{fn} の読み込みエラー: {e}"))
+
+            # ── Скрипты Papyrus (.pex): только строки для показа ─────────────
+            # ゲームが読むのは Scripts/ 直下の .pex だけ。表示用の関数に渡す文字列だけを訳す
+            elif ext == ".pex":
+                if not include_pex or rel_dir.lower() != "scripts":
+                    continue
+                try:
+                    with open(full, "rb") as f:
+                        data = f.read()
+                    found = pex_extract_strings(data, encoding, tgt_lang, src_lang)
+                except Exception as e:
+                    if log_func:
+                        log_func("warn", _tx(f"{fn}: не удалось разобрать скрипт ({e})",
+                                             f"{fn}: スクリプトを解析できないので翻訳しません（{e}）"))
+                    continue
+                if found:
+                    counts["scripts"] += 1
+                for s in found:
+                    units.append({"rel": rel, "kind": "pex_string",
+                                  "src": s, "dst": None,
+                                  "orig_path": rel, "orig_src": s})
 
             # ── .strings / .dlstrings / .ilstrings ────────────────────────
             elif ext in STRING_EXTS and not is_source_lang_file(fn, src_lang):
@@ -2460,6 +2858,95 @@ def load_ini_units(path=None, text=None):
     return units
 
 
+# ── Interface/Translations: 既存の訳ファイルへのマージ ─────────────────────
+# 英語の訳ファイルにあって、対になる翻訳先ファイル（_japanese.txt など）にないキーだけを訳して追記する。
+# 既存の行は変えない。キーの比較は大文字小文字を区別しない。
+
+def decode_translation_text(raw, fallback="utf-8"):
+    """Interface/Translations の txt（ふつうは UTF-16 LE + BOM）を文字列にする。"""
+    enc = detect_text_encoding(raw, fallback)
+    return raw.decode(enc, errors="replace").lstrip("\ufeff").replace("\x00", "")
+
+
+def translation_keys(text):
+    """→ {小文字のキー: 値}（値が空のキーも含む）"""
+    keys = {}
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if not ln.startswith("$"):
+            continue
+        if "\t" in ln:
+            k, _, v = ln.partition("\t")
+        elif "=" in ln:
+            k, _, v = ln.partition("=")
+        else:
+            k, v = ln, ""
+        keys.setdefault(k.strip().lower(), v.strip())
+    return keys
+
+
+def _find_file_ci(directory, name):
+    """directory 内の name（大文字小文字を区別しない）→ 実際のパス or None"""
+    try:
+        low = name.lower()
+        for fn in os.listdir(directory):
+            if fn.lower() == low:
+                return os.path.join(directory, fn)
+    except OSError:
+        pass
+    return None
+
+
+def translation_gap(src_path, tgt_code, encoding="utf-8"):
+    """英語の訳ファイル src_path と、同じフォルダの翻訳先ファイルを比べる。
+    → (翻訳先ファイルのパス or None, 翻訳先の本文, 足りないキーの集合)
+    翻訳先ファイルがなければ (None, None, None)。"""
+    tgt_path = _find_file_ci(os.path.dirname(src_path), _localize_name(os.path.basename(src_path), tgt_code))
+    if not tgt_path or os.path.normcase(tgt_path) == os.path.normcase(src_path):
+        return None, None, None
+    try:
+        with open(src_path, "rb") as f:
+            src_keys = translation_keys(decode_translation_text(f.read(), encoding))
+        with open(tgt_path, "rb") as f:
+            tgt_text = decode_translation_text(f.read(), encoding)
+    except OSError:
+        return None, None, None
+    tgt_keys = translation_keys(tgt_text)
+    missing = {k for k, v in src_keys.items() if v and k not in tgt_keys}
+    return tgt_path, tgt_text, missing
+
+
+def apply_translation_merge(units, mod_path, tgt_code, encoding="utf-8"):
+    """1 Mod 分のユニットのうち、ルーズの英語訳ファイル（swf_line）で翻訳先ファイルが既にあるものは
+    足りないキーだけ残し、merge_base（既存の翻訳先の本文）を付ける。→ 新しいリスト"""
+    out, cache = [], {}
+    for u in units:
+        rel = u.get("rel") or ""
+        if u.get("kind") != "swf_line" or "//" in rel:
+            out.append(u)
+            continue
+        if rel not in cache:
+            cache[rel] = translation_gap(os.path.join(mod_path, rel), tgt_code, encoding)
+        tgt_path, tgt_text, missing = cache[rel]
+        if tgt_path is None:
+            out.append(u)
+            continue
+        if (u.get("key") or "").strip().lower() not in missing:
+            continue                      # 翻訳先ファイルに既にあるキー
+        u["merge_base"] = tgt_text
+        u["merge_target"] = os.path.relpath(tgt_path, mod_path).replace("\\", "/")
+        out.append(u)
+    return out
+
+
+def merged_translation_body(base_text, new_lines, nl="\r\n"):
+    """既存の翻訳先ファイルの本文に新しい行を追記する（既存の行はそのまま）。"""
+    lines = base_text.splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return nl.join(lines + list(new_lines))
+
+
 def load_swf_txt(path, encoding="utf-8"):
     """Skyrim Interface/Translations: строки '$KEY\\tvalue' или '$KEY=value'."""
     units = []
@@ -2577,6 +3064,7 @@ DEFAULT_CONFIG = {
     "extract_bsa": True, "gen_report": False,
     "out_folder": os.path.expanduser("~/Desktop"),
     "out_name": "", "save_zip": True, "save_dsd": True, "allow_risky": False, "per_mod_save": False, "in_place": False,
+    "translate_pex": False,
     "status_filter": ["done", "stale", "ja", "todo", "none"], "notify_done": True,
     "batch_size": 1,
 }
@@ -2719,6 +3207,8 @@ class TranslationDialog(QtWidgets.QDialog):
             self.btn_sst.setToolTip(self.tr("tip_load_sst"))
         if hasattr(self, "chk_risky"):
             self.chk_risky.setToolTip(self.tr("tip_risky"))
+        if hasattr(self, "chk_pex"):
+            self.chk_pex.setToolTip(self.tr("tip_pex"))
         if hasattr(self, "chk_permod"):
             self.chk_permod.setToolTip(self.tr("tip_per_mod"))
         if hasattr(self, "chk_inplace"):
@@ -2782,6 +3272,7 @@ class TranslationDialog(QtWidgets.QDialog):
         self.chk_zip.setChecked(c["save_zip"])
         self.chk_dsd.setChecked(c.get("save_dsd", True))
         self.chk_risky.setChecked(c.get("allow_risky", False))
+        self.chk_pex.setChecked(c.get("translate_pex", False))
         self.chk_permod.setChecked(c.get("per_mod_save", False))
         self.chk_inplace.setChecked(c.get("in_place", False))
         self.chk_notify.setChecked(c.get("notify_done", True))
@@ -2792,8 +3283,16 @@ class TranslationDialog(QtWidgets.QDialog):
             cb.blockSignals(False)
         self.chk_inplace.toggled.connect(self._sync_risky)
         self.chk_risky.toggled.connect(self._sync_risky)
+        self.chk_pex.toggled.connect(self._on_pex_toggled)
         self._sync_risky()
         self._gloss_reload()
+
+    def _on_pex_toggled(self, *_):
+        """.pex を対象にするかで「状態」列の判定が変わるので、判定し直す。"""
+        if getattr(self, "running", False) or not getattr(self, "mods", None):
+            return
+        self._compute_statuses()
+        self._fill_mod_table()
 
     def _sync_risky(self, *_):
         """安全モード（危険な形式オフ）では .esp は DSD 出力に固定。"""
@@ -2891,6 +3390,7 @@ class TranslationDialog(QtWidgets.QDialog):
         self.chk_bsa = QtWidgets.QCheckBox()
         self.chk_report = QtWidgets.QCheckBox()
         self.chk_risky = QtWidgets.QCheckBox()
+        self.chk_pex = QtWidgets.QCheckBox()
 
         for w, k in ((self.chk_units, "convert_units"),
                      (self.chk_delay_l, "delay"),
@@ -2899,7 +3399,8 @@ class TranslationDialog(QtWidgets.QDialog):
                      (self.chk_dry, "dry_run"),
                      (self.chk_bsa, "extract_bsa"),
                      (self.chk_report, "gen_report"),
-                     (self.chk_risky, "allow_risky")):
+                     (self.chk_risky, "allow_risky"),
+                     (self.chk_pex, "translate_pex")):
             self._tr_lbl(w, k)
 
         gl.addWidget(self.chk_units, 1, 0)
@@ -2913,6 +3414,7 @@ class TranslationDialog(QtWidgets.QDialog):
         gl.addWidget(self.chk_bsa, 1, 8)
         gl.addWidget(self.chk_report, 1, 9)
         gl.addWidget(self.chk_risky, 2, 0, 1, 10)
+        gl.addWidget(self.chk_pex, 3, 0, 1, 10)
         root.addWidget(g1)
 
         # ── Панель API ────────────────────────────────────────────────────
@@ -3447,7 +3949,8 @@ class TranslationDialog(QtWidgets.QDialog):
                 continue
             try:
                 m["status"], m["status_detail"] = compute_mod_status(
-                    m["path"], m["name"], tgt, src, self._dsd_covered)
+                    m["path"], m["name"], tgt, src, self._dsd_covered,
+                    include_pex=self.chk_pex.isChecked())
             except Exception as e:
                 m["status"], m["status_detail"] = "todo", f"判定エラー: {e}"
             if i % 50 == 0:
@@ -3787,7 +4290,8 @@ class TranslationDialog(QtWidgets.QDialog):
     def _capture_scan_opts(self):
         """ワーカースレッドで使う UI の値（GUI スレッドで読む）。"""
         return {"bsa": self.chk_bsa.isChecked(), "enc": self.cb_enc.currentText(),
-                "risky": self.chk_risky.isChecked(), "src": self.cb_src.currentData() or "en"}
+                "risky": self.chk_risky.isChecked(), "src": self.cb_src.currentData() or "en",
+                "pex": self.chk_pex.isChecked(), "tgt": self.cb_tgt.currentData() or "ja"}
 
     def _load_mod_preview(self, mod):
         # Блокируем кнопки на время сканирования
@@ -3883,7 +4387,8 @@ class TranslationDialog(QtWidgets.QDialog):
                 _counts, scanned = scan_mod_dir(
                     temp_dir, self.chk_bsa.isChecked(), self.cb_enc.currentText(),
                     lambda lvl, msg: self._log(lvl, f"[{nm}] {msg}"),
-                    allow_risky=self.chk_risky.isChecked(), src_lang=self.cb_src.currentData() or "en"
+                    allow_risky=self.chk_risky.isChecked(), src_lang=self.cb_src.currentData() or "en",
+                    include_pex=self.chk_pex.isChecked(), tgt_lang=self.cb_tgt.currentData() or "ja"
                 )
                 
                 for u in scanned:
@@ -3904,7 +4409,7 @@ class TranslationDialog(QtWidgets.QDialog):
                             su["temp_path"] = u["path"]
                             if "orig_src" not in su: su["orig_src"] = su.get("src", "")
                             units.append(su)
-                    elif u["kind"] in ("strings", "esp_string", "json_kv"):
+                    elif u["kind"] in ("strings", "esp_string", "json_kv", "pex_string"):
                         units.append(u)
                         
             except Exception as e:
@@ -4045,6 +4550,7 @@ class TranslationDialog(QtWidgets.QDialog):
             "save_zip": self.chk_zip.isChecked(),
             "save_dsd": self.chk_dsd.isChecked(),
             "allow_risky": self.chk_risky.isChecked(),
+            "translate_pex": self.chk_pex.isChecked(),
             "per_mod_save": self.chk_permod.isChecked(),
             "in_place": self.chk_inplace.isChecked(),
             "status_filter": sorted(self._shown_states()),
@@ -4210,15 +4716,18 @@ class TranslationDialog(QtWidgets.QDialog):
                     self.q.put(("log", "info", _tx(f"Сканирование {m['name']} ({idx + 1}/{total})…", f"{m['name']} をスキャン中 ({idx + 1}/{total})…")))
                     
                     try:
+                        _so = getattr(self, "_scan_opts", None) or {}
                         _counts, scanned = scan_mod_dir(
                             m["path"], extract_bsa, encoding,
                             lambda lvl, msg: self.q.put(("log", lvl, f"[{m['name']}] {msg}")),
                             allow_risky=allow_risky, cancel=self.cancel_ev,
-                            src_lang=(getattr(self, "_scan_opts", None) or {}).get("src", "en"))
+                            src_lang=_so.get("src", "en"),
+                            include_pex=_so.get("pex", False), tgt_lang=_so.get("tgt", "ja"))
                     except Exception as e:
                         self.q.put(("log", "err", f"{m['name']}: {e}"))
                         continue
 
+                    mod_start = len(units)
                     for u in scanned:
                         u["mod"] = m["name"]
                         if "orig_src" not in u:
@@ -4292,8 +4801,11 @@ class TranslationDialog(QtWidgets.QDialog):
                                             "kind": "txt_line", "src": ln,
                                             "dst": None, "orig_src": ln,
                                             "iext": u["iext"]})
-                        elif u["kind"] in ("strings", "json_kv", "esp_string"):
+                        elif u["kind"] in ("strings", "json_kv", "esp_string", "pex_string"):
                             units.append(u)
+
+                    units[mod_start:] = self._merge_existing_translations(
+                        units[mod_start:], m, encoding)
 
             if self.run_id == run_id:
                 self.q.put(("collected", run_id, units))
@@ -4311,7 +4823,8 @@ class TranslationDialog(QtWidgets.QDialog):
                 _counts, scanned = scan_mod_dir(
                     mod["path"], opts["bsa"], enc,
                     lambda lvl, msg: self.q.put(("log", lvl, f"[{mod['name']}] {msg}")),
-                    allow_risky=opts["risky"], cancel=self.cancel_ev, src_lang=opts["src"]
+                    allow_risky=opts["risky"], cancel=self.cancel_ev, src_lang=opts["src"],
+                    include_pex=opts.get("pex", False), tgt_lang=opts.get("tgt", "ja")
                 )
             except Exception as e:
                 self.q.put(("log", "err", f"{mod['name']}: {e}"))
@@ -4380,9 +4893,11 @@ class TranslationDialog(QtWidgets.QDialog):
                                     units.append({"mod": mod["name"], "rel": u["rel"], "kind": "swf_line", "key": parts[0], "src": parts[1], "dst": None, "orig_src": parts[1], "iext": u["iext"]})
                             elif ln.strip():
                                 units.append({"mod": mod["name"], "rel": u["rel"], "kind": "txt_line", "src": ln, "dst": None, "orig_src": ln, "iext": u["iext"]})
-                elif u["kind"] in ("strings", "json_kv", "esp_string"):
+                elif u["kind"] in ("strings", "json_kv", "esp_string", "pex_string"):
                     units.append(u)
-                    
+
+            units = self._merge_existing_translations(units, mod, enc)
+
             if self.run_id == run_id:
                 self.q.put(("collected_preview", run_id, units))
                 
@@ -4391,6 +4906,27 @@ class TranslationDialog(QtWidgets.QDialog):
             self.q.put(("stop_preview", run_id))            
 
     LARGE_JOB_LIMIT = 20000
+
+    def _merge_existing_translations(self, units, mod, encoding):
+        """翻訳先の訳ファイルが既にある英語の訳ファイルは、足りないキーだけを翻訳対象に残す（ワーカーから呼ぶ）。"""
+        tgt = (getattr(self, "_scan_opts", None) or {}).get("tgt", "ja")
+        try:
+            merged = apply_translation_merge(units, mod["path"], tgt, encoding)
+        except Exception as e:
+            self.q.put(("log", "warn", f"[{mod['name']}] merge: {e}"))
+            return units
+        per_file = Counter(u["merge_target"] for u in merged if u.get("merge_target"))
+        before = {u["rel"] for u in units if u.get("kind") == "swf_line"}
+        after = {u["rel"] for u in merged if u.get("kind") == "swf_line"}
+        for rel in sorted(before - after):        # 全キーが翻訳先ファイルにあって丸ごと外れたもの
+            self.q.put(("log", "info", _tx(
+                f"[{mod['name']}] {rel}: все ключи уже переведены",
+                f"[{mod['name']}] {rel}: 翻訳先のファイルにすべてのキーがあるので翻訳しません")))
+        for tgt_rel, n in per_file.items():
+            self.q.put(("log", "info", _tx(
+                f"[{mod['name']}] {tgt_rel}: не хватает {n} ключей — будут добавлены",
+                f"[{mod['name']}] {tgt_rel}: 足りないキー {n} 件だけを翻訳して追記します")))
+        return merged
 
     def _inplace_blocked_rels(self):
         """in_place 時、出力先の別名ファイルが Mod 側に既にある（＝作者の訳など）元ファイルの rel 集合。"""
@@ -4402,6 +4938,8 @@ class TranslationDialog(QtWidgets.QDialog):
         for u in self.units:
             if u.get("kind") not in ("strings", "swf_line", "txt_line"):
                 continue
+            if u.get("merge_base") is not None:
+                continue                  # 既存の翻訳先ファイルへのマージ（足りないキーの追記）は守る対象外
             key = (u.get("mod"), u.get("rel"))
             if key in cache:
                 continue
@@ -5470,14 +6008,21 @@ class TranslationDialog(QtWidgets.QDialog):
                     is_scaleform = (kind == "swf_line"
                                     or "translations" in out_rel.replace("\\", "/").lower())
                     nl = "\r\n" if is_scaleform else "\n"
-                    if kind == "swf_line":
+                    merge_base = u0.get("merge_base") if kind == "swf_line" else None
+                    if merge_base is not None:
+                        # 既存の翻訳先ファイルに、足りなかったキーの訳を追記する
+                        out_rel = os.path.normpath(u0.get("merge_target") or out_rel)
+                        body = merged_translation_body(
+                            merge_base, (f"{u['key']}\t{u['dst'] or u['src']}" for u in us), nl)
+                    elif kind == "swf_line":
                         body = nl.join(f"{u['key']}\t{u['dst'] or u['src']}" for u in us)
                     else:
                         body = nl.join(u["dst"] or u["src"] for u in us)
                     if not out_rel.lower().endswith(".txt"):
                         out_rel += ".txt"
                     # Skyrim の Interface/Translations は UTF-16 LE（BOM 必須）でないと読めない
-                    dests[out_rel] = ("text", body, "utf-16-bom" if is_scaleform else enc_to_use)
+                    dests[out_rel] = ("text", body, "utf-16-bom" if is_scaleform else enc_to_use,
+                                      merge_base is not None)
                     
                 elif kind in ("json", "json_kv"):
                     if not out_rel.endswith(".json"):
@@ -5493,6 +6038,9 @@ class TranslationDialog(QtWidgets.QDialog):
                 elif kind == "esp_string":
                     dests[out_rel] = ("esp_string", us, "binary")
 
+                elif kind == "pex_string":
+                    dests[out_rel] = ("pex", us, "binary")
+
             for out_rel, payload in dests.items():
                 full = os.path.join(out_root, out_rel)
                 try:
@@ -5500,21 +6048,26 @@ class TranslationDialog(QtWidgets.QDialog):
                     ptype = payload[0]
                     pdata = payload[1]
                     enc = payload[2] if len(payload) > 2 else self.cfg["encoding"]
+                    is_merge = ptype == "text" and len(payload) > 3 and payload[3]
 
                     if inplace and ptype != "esp_string":
                         rel_key = os.path.normcase(os.path.normpath(out_rel))
                         if os.path.exists(full) and rel_key not in ours:
-                            if ptype in ("json", "xml", "ini"):
-                                # 元ファイルを上書きする形式: 英語版を .bak_<src> に退避（既に訳済みなら退避し直さない）
-                                bak = f"{full}.bak_{src_code}"
+                            if ptype in ("json", "xml", "ini", "pex") or is_merge:
+                                # 元ファイルを上書きする形式: 元の版を .bak_<言語> に退避（既に訳済みなら退避し直さない）
+                                # マージは作者などの翻訳先ファイルに追記するので、翻訳先言語の名前で退避する
+                                bak = f"{full}.bak_{target_code if is_merge else src_code}"
                                 try:
                                     with open(full, "rb") as f:
                                         cur = f.read()
                                     cur_txt = cur.decode(detect_text_encoding(cur, "utf-8"), "replace")
                                 except Exception:
                                     cur, cur_txt = None, ""
-                                if cur is not None and (not os.path.exists(bak)
-                                                        or not already_in_target(cur_txt, target_code, src_code)):
+                                # .pex はバイナリなので文字で判定できない → 退避が既にあれば作り直さない
+                                renew = (not os.path.exists(bak)
+                                         or (ptype not in ("pex", "text")
+                                             and not already_in_target(cur_txt, target_code, src_code)))
+                                if cur is not None and renew:
                                     shutil.copy2(full, bak)
                                     b_rel = os.path.relpath(bak, out_root).replace("\\", "/")
                                     if b_rel not in manifest["backups"]:
@@ -5577,6 +6130,25 @@ class TranslationDialog(QtWidgets.QDialog):
                         else:
                             self._log("warn", _tx(f"{rel}: нет исходного текста INI, файл пропущен", f"{rel}: INI の元テキストがないためスキップしました"))
                         
+                    elif ptype == "pex":
+                        rel = pdata[0].get("orig_path") or pdata[0].get("rel") or out_rel
+                        mod_obj = next((m for m in self.mods if m["name"] == pdata[0].get("mod")), None)
+                        src_path = os.path.normpath(os.path.join(mod_obj["path"], rel)) if mod_obj else ""
+                        # 収集時に読んだのと同じファイル（in_place の再翻訳では訳済みの .pex）に差し替えを足す
+                        if not src_path or not os.path.exists(src_path):
+                            raise RuntimeError(_tx(f"не найден исходный скрипт {rel}",
+                                                   f"元のスクリプト {rel} が見つかりません"))
+                        with open(src_path, "rb") as f:
+                            orig_data = f.read()
+                        trans_dict = {u.get("orig_src", u["src"]): u["dst"]
+                                      for u in pdata if u.get("dst") and not u.get("excluded")}
+                        changes, new_data = pex_apply_translations(orig_data, trans_dict, self.cfg["encoding"])
+                        with open(full, "wb") as f:
+                            f.write(new_data)
+                        self._log("ok" if changes else "warn", _tx(
+                            f"{out_rel}: заменено {changes} мест",
+                            f"{out_rel}: 表示用の文字列を {changes} か所差し替えました"))
+
                     elif ptype == "esp_string":
                         # 注意: ループ外の rel は別ファイルの値が残っているので、ユニットから取り直す
                         rel = pdata[0].get("orig_path") or pdata[0].get("rel") or out_rel
@@ -5888,6 +6460,7 @@ class TranslationDialog(QtWidgets.QDialog):
             "save_zip": self.chk_zip.isChecked(),
             "save_dsd": self.chk_dsd.isChecked(),
             "allow_risky": self.chk_risky.isChecked(),
+            "translate_pex": self.chk_pex.isChecked(),
             "per_mod_save": self.chk_permod.isChecked(),
             "in_place": self.chk_inplace.isChecked(),
             "status_filter": sorted(self._shown_states()),

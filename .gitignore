@@ -5,3 +5,4 @@ __pycache__/
 *.config.json
 *.glossary.json
 translation_cache.json
+*.zip

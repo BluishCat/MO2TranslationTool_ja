@@ -9,7 +9,7 @@ Mod Organizer 2 の中で Mod を翻訳するプラグインです。LLM や機�
 
 ## 導入
 
-1. `MO2 Translation Tool.py` を MO2 の `plugins` フォルダに入れます（例：`<MO2>/plugins/`）。原作を入れている場合は上書きしてください。両方を同時には使えません。
+1. [Releases](https://github.com/BluishCat/MO2TranslationTool_ja/releases/latest) から zip をダウンロードして展開し、`MO2 Translation Tool.py` を MO2 の `plugins` フォルダに入れます（例：`<MO2>/plugins/`）。原作を入れている場合は上書きしてください。両方を同時には使えません。
 2. MO2 を起動するか、起動し直します。
 3. MO2 のツールメニューから「MO2 Translation Tool」を開きます。
 

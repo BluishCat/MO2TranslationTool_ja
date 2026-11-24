@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MO2 Translation Tool — v3.0.1-ja.2（日本語化・改造版）
+MO2 Translation Tool — v3.0.1-ja.3（日本語化・改造版）
 =====================================================
 
 Mod Organizer 2 用の Mod 翻訳プラグイン（LLM / 機械翻訳）。
@@ -507,7 +507,7 @@ def has_mixed_language(src, dst, target_lang):
 # Константы
 # ============================================================================
 APP_NAME = "MO2 Translation Tool"
-APP_VERSION = "3.0.1-ja.2"
+APP_VERSION = "3.0.1-ja.3"
 CONFIG_NAME = "MO2 Translation Tool.config.json"
 GLOSSARY_NAME = "MO2 Translation Tool.glossary.json"
 
@@ -3150,6 +3150,7 @@ class TranslationDialog(QtWidgets.QDialog):
         self._build_ui()
         self._retranslate()
         self._restore_fields()
+        self._restore_window_state()
 
         self._gloss_save_timer = QtCore.QTimer(self)
         self._gloss_save_timer.setSingleShot(True)
@@ -4516,8 +4517,30 @@ class TranslationDialog(QtWidgets.QDialog):
             self.ed_openai_model.text().strip(), temp, maxtok)
 
     # ── запуск перевода ───────────────────────────────────────────────────
+    def _gather_window_state(self):
+        """ウィンドウの位置・サイズ（最大化を含む）とプレビュー表の「ファイル」列の幅を self.cfg に入れる。"""
+        try:
+            self.cfg["window_geometry"] = bytes(self.saveGeometry().toHex().data()).decode("ascii")
+            if hasattr(self, "prev_table"):
+                self.cfg["preview_file_col_width"] = self.prev_table.columnWidth(1)
+        except Exception:
+            pass
+
+    def _restore_window_state(self):
+        """保存したウィンドウの位置・サイズを戻す（画面構成が変わっていれば Qt が画面内に収める）。"""
+        geo = self.cfg.get("window_geometry")
+        if geo:
+            try:
+                self.restoreGeometry(QtCore.QByteArray.fromHex(geo.encode("ascii")))
+            except Exception:
+                pass
+        w = self.cfg.get("preview_file_col_width")
+        if isinstance(w, int) and 40 <= w <= 2000 and hasattr(self, "prev_table"):
+            self.prev_table.setColumnWidth(1, w)
+
     def _gather_cfg(self):
         """画面の設定値を self.cfg に反映する（保存はしない）。"""
+        self._gather_window_state()
         self.cfg.update({
             "backend": self.cb_backend.currentText(),
             "source": self.cb_src.currentData() or "en",

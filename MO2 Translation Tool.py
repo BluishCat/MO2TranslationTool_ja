@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MO2 Translation Tool — v3.0.1-ja.4（日本語化・改造版）
+MO2 Translation Tool — v3.0.1-ja.5（日本語化・改造版）
 =====================================================
 
 Mod Organizer 2 用の Mod 翻訳プラグイン（LLM / 機械翻訳）。
@@ -124,6 +124,7 @@ KEEP_ANCHOR = _pick("QtGui.QTextCursor.MoveMode.KeepAnchor", "QtGui.QTextCursor.
 BTN_YES = _pick("QtWidgets.QMessageBox.StandardButton.Yes", "QtWidgets.QMessageBox.Yes")
 BTN_NO = _pick("QtWidgets.QMessageBox.StandardButton.No", "QtWidgets.QMessageBox.No")
 TAB_N = _pick("QtWidgets.QTabWidget.TabPosition.North", "QtWidgets.QTabWidget.North")
+EV_RESIZE = _pick("QtCore.QEvent.Type.Resize", "QtCore.QEvent.Resize")
 ROLE_USER = _pick("Qt.ItemDataRole.UserRole", "Qt.UserRole")
 SEL_MULTI = _pick("QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection",
                   "QtWidgets.QAbstractItemView.ExtendedSelection")
@@ -517,7 +518,7 @@ def has_mixed_language(src, dst, target_lang):
 # Константы
 # ============================================================================
 APP_NAME = "MO2 Translation Tool"
-APP_VERSION = "3.0.1-ja.4"
+APP_VERSION = "3.0.1-ja.5"
 CONFIG_NAME = "MO2 Translation Tool.config.json"
 GLOSSARY_NAME = "MO2 Translation Tool.glossary.json"
 
@@ -3886,6 +3887,14 @@ class TranslationDialog(QtWidgets.QDialog):
         self.mod_table.setEditTriggers(NO_EDIT)
         self.mod_table.itemChanged.connect(self._mod_checked)
         self.mod_table.cellDoubleClicked.connect(self._on_mod_double_clicked)
+        # 読み込み中・表示する Mod がないときに、一覧の上に重ねて出すメッセージ
+        self.mod_overlay = QtWidgets.QLabel(self.mod_table.viewport())
+        self.mod_overlay.setObjectName("hint")
+        self.mod_overlay.setAlignment(ALIGN_CENTER)
+        self.mod_overlay.setWordWrap(True)
+        self.mod_overlay.hide()
+        self.mod_table.viewport().installEventFilter(self)
+        self._mods_loading = False
         root.addWidget(self.mod_table, 2)
 
         # ── Вкладки ───────────────────────────────────────────────────────
@@ -4123,9 +4132,61 @@ class TranslationDialog(QtWidgets.QDialog):
         self.log.ensureCursorVisible()
 
     # ── моды ───────────────────────────────────────────────────────────────
+    def eventFilter(self, obj, ev):
+        if getattr(self, "mod_overlay", None) is not None and obj is self.mod_table.viewport() \
+                and ev.type() == EV_RESIZE:
+            self.mod_overlay.setGeometry(obj.rect())
+        return super().eventFilter(obj, ev)
+
+    def _set_mod_overlay(self, text=None):
+        """Mod 一覧の上にメッセージを重ねて表示する（None で消す）。"""
+        ov = getattr(self, "mod_overlay", None)
+        if ov is None:
+            return
+        if text:
+            ov.setText(text)
+            ov.setGeometry(self.mod_table.viewport().rect())
+            ov.show()
+            ov.raise_()
+        else:
+            ov.hide()
+
+    def _loading_progress(self, step, i, n):
+        if self._mods_loading:
+            self._set_mod_overlay(_tx(f"Загрузка модов… {step} {i}/{n}",
+                                      f"Mod を読み込み中…\n{step} {i} / {n}"))
+
+    def _update_empty_overlay(self):
+        """読み込みが終わって 1 行も表示されていなければ、理由を表示する。"""
+        if self._mods_loading:
+            return
+        if self.mod_table.rowCount() or not self.mods:
+            self._set_mod_overlay(None)
+            return
+        shown = [self.tr("st_" + c) for c in ("done", "stale", "ja", "todo", "none") if c in self._shown_states()]
+        if self.ed_search.text().strip():
+            msg = _tx("Нет модов, подходящих под поиск.", "検索に一致する Mod がありません。")
+        else:
+            msg = _tx("Нет модов в выбранных состояниях.",
+                      "表示中の状態（" + ("・".join(shown) or "なし") + "）の Mod はありません。\n"
+                      "上の状態のチェックで、ほかの状態の Mod も表示できます。")
+        self._set_mod_overlay(msg)
+
     def refresh_mods(self):
         self._pending_units = None
         self.mods = []
+        self._mods_loading = True
+        self.mod_table.setRowCount(0)
+        self._set_mod_overlay(_tx("Загрузка списка модов…", "Mod 一覧を読み込み中…"))
+        QtWidgets.QApplication.processEvents()
+        try:
+            self._refresh_mods_inner()
+        finally:
+            self._mods_loading = False
+            self._set_mod_overlay(None)
+            self._update_empty_overlay()
+
+    def _refresh_mods_inner(self):
         org = getattr(self.plugin, "_organizer", None)
         if org is None:
             self._log("warn", _tx("MO2 недоступен — список модов пуст.", "MO2 にアクセスできません — Mod 一覧は空です。"))
@@ -4192,6 +4253,7 @@ class TranslationDialog(QtWidgets.QDialog):
             except Exception:
                 pass
             if i % 50 == 0:
+                self._loading_progress(_tx("файлы", "ファイルを確認中"), i, len(self.mods))
                 QtWidgets.QApplication.processEvents()
         self._compute_statuses()
 
@@ -4241,6 +4303,7 @@ class TranslationDialog(QtWidgets.QDialog):
             except Exception as e:
                 m["status"], m["status_detail"] = "todo", f"判定エラー: {e}"
             if i % 50 == 0:
+                self._loading_progress(_tx("состояние", "翻訳状態を判定中"), i, len(self.mods))
                 QtWidgets.QApplication.processEvents()
 
     def add_folders(self):
@@ -4383,6 +4446,7 @@ class TranslationDialog(QtWidgets.QDialog):
             self.mod_table.setItem(row, 6, self._status_item(m))
         self.mod_table.blockSignals(False)
         self._update_state_filter_labels()
+        self._update_empty_overlay()
 
     def _shown_states(self):
         if not hasattr(self, "chk_states"):

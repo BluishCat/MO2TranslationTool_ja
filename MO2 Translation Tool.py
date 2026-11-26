@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MO2 Translation Tool — v3.0.1-ja.5（日本語化・改造版）
+MO2 Translation Tool — v3.0.1-ja.6（日本語化・改造版）
 =====================================================
 
 Mod Organizer 2 用の Mod 翻訳プラグイン（LLM / 機械翻訳）。
@@ -518,7 +518,7 @@ def has_mixed_language(src, dst, target_lang):
 # Константы
 # ============================================================================
 APP_NAME = "MO2 Translation Tool"
-APP_VERSION = "3.0.1-ja.5"
+APP_VERSION = "3.0.1-ja.6"
 CONFIG_NAME = "MO2 Translation Tool.config.json"
 GLOSSARY_NAME = "MO2 Translation Tool.glossary.json"
 
@@ -587,12 +587,12 @@ T = {
     "btn_open_out": ("Открыть папку вывода", "Open output folder"),
     "btn_close": ("Закрыть", "Close"),
     "btn_open_file": ("Открыть файл…", "Open file…"),
-    "btn_load_sst": ("Загрузить словарь .sst…", "Load .sst dictionary…"),
+    "btn_load_sst": ("Словари .sst", "SST dictionaries"),
     "tip_load_sst": (
-        "Словарь терминов xTranslator (.sst): «оригинал \\t перевод» или «оригинал=перевод».\n"
-        "Точные совпадения переводятся из словаря без обращения к LLM.",
-        "xTranslator term dictionary (.sst): \"original \\t translation\" or \"original=translation\".\n"
-        "Exact matches are translated from the dictionary without calling the LLM."),
+        "Словари xTranslator (.sst, бинарные SSU2/SSU8/SSU9) или текст «оригинал \\t перевод».\n"
+        "Точные совпадения переводятся из словаря без обращения к LLM. Пути запоминаются.",
+        "xTranslator dictionaries (.sst, binary SSU2/SSU8/SSU9) or text \"original \\t translation\".\n"
+        "Exact matches are translated from the dictionary without calling the LLM. Paths are remembered."),
     "sst_loaded": ("Загружено {n} терминов из словаря .sst ({path}). Всего в словаре: {total}",
                    "Loaded {n} terms from .sst dictionary ({path}). Dictionary total: {total}"),
     "sst_no_pairs": ("В файле не найдено пар «оригинал → перевод».",
@@ -601,6 +601,16 @@ T = {
     "sst_bad_enc": ("Файл не читается ни в одной известной кодировке (UTF-8, UTF-16, cp1251, cp1252).",
                     "The file is not readable in any known encoding (UTF-8, UTF-16, cp1251, cp1252)."),
     "tip_sst": ("Перевод взят из словаря .sst", "Translation taken from the .sst dictionary"),
+    "sst_add_files": ("Добавить файлы .sst…", "Add .sst files…"),
+    "sst_add_folder": ("Добавить папку со словарями…", "Add dictionary folder…"),
+    "sst_reload": ("Перезагрузить словари", "Reload dictionaries"),
+    "sst_clear": ("Очистить словари", "Clear dictionaries"),
+    "sst_status": ("Загружено: {total} строк из {files} файлов", "Loaded: {total} strings from {files} files"),
+    "sst_cleared": ("Словари .sst очищены.", "The .sst dictionaries were cleared."),
+    "sst_missing": ("Путь словаря не найден:", "Dictionary path not found:"),
+    "sst_unknown_fmt": ("неизвестный формат .sst", "unknown .sst format"),
+    "sst_loaded_many": ("Словари .sst: {files} файлов, {n} строк. Всего в словаре: {total}",
+                        "SST dictionaries: {files} files, {n} strings. Dictionary total: {total}"),
     "tip_len_warn": ("⚠️ Перевод слишком длинный, может не поместиться в интерфейсе",
                      "⚠️ The translation is too long — it may not fit in the interface"),
     "tip_len_note": ("Длина: {n} против {m} символов", "Length: {n} vs {m} characters"),
@@ -752,15 +762,26 @@ T_JA = {
     "btn_open_out": "出力フォルダを開く",
     "btn_close": "閉じる",
     "btn_open_file": "ファイルを開く…",
-    "btn_load_sst": ".sst 辞書を読み込む…",
+    "btn_load_sst": "SST 辞書",
     "tip_load_sst": (
-        "xTranslator の用語辞書 (.sst)：「原文 \\t 訳文」または「原文=訳文」形式。\n"
-        "完全一致する文字列は LLM を呼ばずに辞書から翻訳されます。"),
+        "xTranslator の辞書 (.sst、バイナリの SSU2/SSU8/SSU9) か、「原文 \\t 訳文」形式のテキスト。\n"
+        "原文と完全に一致する文字列は、LLM を呼ばずに辞書の訳を使います。\n"
+        "読み込んだファイル・フォルダは記憶され、次回から自動で読み込まれます。\n"
+        "フォルダ（xTranslator の UserDictionaries など）は毎回中身を探し直します。"),
     "sst_loaded": ".sst 辞書から {n} 語を読み込みました ({path})。辞書の合計: {total}",
     "sst_no_pairs": "ファイル内に「原文 → 訳文」のペアが見つかりません。",
     "sst_error": ".sst 辞書を読み込めませんでした:",
     "sst_bad_enc": "既知のどの文字コード (UTF-8, UTF-16, cp1251, cp1252) でも読み込めません。",
     "tip_sst": ".sst 辞書から取得した訳文",
+    "sst_add_files": ".sst ファイルを追加…",
+    "sst_add_folder": "辞書フォルダを追加…",
+    "sst_reload": "辞書を読み込み直す",
+    "sst_clear": "辞書をすべて外す",
+    "sst_status": "読み込み済み: {files} ファイル、{total} 件",
+    "sst_cleared": ".sst 辞書をすべて外しました。",
+    "sst_missing": "辞書のパスが見つかりません:",
+    "sst_unknown_fmt": "未対応の .sst 形式です",
+    "sst_loaded_many": ".sst 辞書: {files} ファイル、{n} 件を読み込みました。辞書の合計: {total}",
     "tip_len_warn": "⚠️ 訳文が長すぎます。UI に収まらない可能性があります",
     "tip_len_note": "長さ: {n} 文字（原文 {m} 文字）",
     "tip_mixed": "訳文に英単語が残っています",
@@ -3301,6 +3322,170 @@ def _localize_name(name, tgt_code):
 
 
 # ============================================================================
+# xTranslator の .sst 辞書（バイナリ SSU2/SSU8/SSU9 と、テキスト形式）
+# ============================================================================
+# エントリ = [prefix][レコード sig + その後ろの固定長部分][u32 原文長][UTF-16LE 原文][u32 訳文長][UTF-16LE 訳文]
+# 版ごとにヘッダ長が違う（SSU2=4, SSU8=9, SSU9=13 を実ファイルで確認）。ヘッダ長は
+# 「ファイル末尾までちょうど読み切れるか」で判別するので、未知の版でも構造が同じなら読める。
+_SST_ENTRY_LAYOUTS = ((2, 0, 0), (9, 8, 10))   # (prefix, sig 長, sig の後ろの長さ)
+
+
+def _sst_try_layout(raw, header, prefix, sig_len, after):
+    n = len(raw)
+    p = header
+    out = []
+    unpack = struct.unpack_from
+    while p < n:
+        p += prefix
+        if sig_len:
+            if p + sig_len > n:
+                return None
+            sig = raw[p:p + sig_len]
+            if any(c < 32 or c > 126 for c in sig):
+                return None
+            p += sig_len + after
+        pair = []
+        for _ in range(2):
+            if p + 4 > n:
+                return None
+            ln = unpack("<I", raw, p)[0]
+            p += 4
+            if ln & 1 or p + ln > n:
+                return None
+            try:
+                pair.append(raw[p:p + ln].decode("utf-16-le"))
+            except UnicodeDecodeError:
+                return None
+            p += ln
+        out.append((pair[0], pair[1]))
+    return out if p == n else None
+
+
+def _sst_header_len(raw):
+    """ヘッダ = "SSU<n>" + u8 + u32 マスター数 + マスター名（u32 長 + UTF-16LE）× 数。
+    SSU9 はこの後ろに 4 バイト続く。読めなければ None。"""
+    try:
+        p = 5
+        cnt = struct.unpack_from("<I", raw, p)[0]
+        p += 4
+        if cnt > 4096:
+            return None
+        for _ in range(cnt):
+            ln = struct.unpack_from("<I", raw, p)[0]
+            p += 4 + ln
+            if ln & 1 or p > len(raw):
+                return None
+        return p
+    except struct.error:
+        return None
+
+
+def parse_sst_binary(raw):
+    """xTranslator のバイナリ .sst → [(原文, 訳文), ...]。この形式でなければ None。
+
+    ヘッダだけの空の辞書は [] を返す（エラーではない）。
+    """
+    if len(raw) < 4 or raw[:3] != b"SSU":
+        return None
+    base = _sst_header_len(raw)
+    if base is not None:
+        for extra in (0, 4):   # SSU8 は 0、SSU9 は 4
+            h = base + extra
+            if h == len(raw):
+                return []
+            for prefix, sig_len, after in _SST_ENTRY_LAYOUTS:
+                res = _sst_try_layout(raw, h, prefix, sig_len, after)
+                if res:
+                    return res
+    # 構造どおりに読めない版（SSU2 など）は、ヘッダ長を総当たりで探す
+    for header in range(4, min(33, len(raw))):
+        for prefix, sig_len, after in _SST_ENTRY_LAYOUTS:
+            res = _sst_try_layout(raw, header, prefix, sig_len, after)
+            if res:   # 空の結果は「たまたま読み切れた」だけなので採らない
+                return res
+    return None
+
+
+def _sst_parse_line(line):
+    """テキスト形式の 1 行: 「原文 \\t 訳文」または「原文=訳文」。"""
+    if "\t" in line:
+        parts = line.split("\t")
+        if len(parts) < 2:
+            return None
+        orig, dst = parts[0], parts[1]
+    elif "=" in line:
+        orig, dst = line.split("=", 1)
+    else:
+        return None
+    orig, dst = orig.strip(), dst.strip()
+    if not orig or not dst:
+        return None
+    return orig, dst
+
+
+def _sst_decode_text(raw):
+    enc = detect_text_encoding(raw)
+    for cand in (enc, "utf-8", "utf-16-le", "utf-16-be", "cp1251", "cp1252"):
+        try:
+            return raw.decode(cand), cand
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return None, None
+
+
+def read_sst_pairs(raw):
+    """.sst のバイト列 → ({原文: 訳文}, 形式名)。読めなければ (None, 理由)。
+
+    未翻訳のエントリ（訳文が空・原文と同じ）は除く。同じ原文に複数の訳がある場合
+    （レコードごとに訳し分けている場合）は、いちばん多い訳を採る。
+    """
+    entries = parse_sst_binary(raw)
+    fmt = raw[:4].decode("ascii", "replace") if entries is not None else None
+    if entries is None:
+        if raw[:3] == b"SSU":
+            return None, "unknown_binary"
+        text, enc = _sst_decode_text(raw)
+        if text is None:
+            return None, "bad_enc"
+        fmt = f"text/{enc}"
+        entries = []
+        for line in text.replace("\x00", "").splitlines():
+            line = line.strip().lstrip("\ufeff")
+            if line:
+                parsed = _sst_parse_line(line)
+                if parsed:
+                    entries.append(parsed)
+    votes = {}
+    for src, dst in entries:
+        if not src or not dst.strip() or dst == src:
+            continue
+        votes.setdefault(src, Counter())[dst] += 1
+    return {s: c.most_common(1)[0][0] for s, c in votes.items()}, fmt
+
+
+def expand_sst_paths(paths):
+    """ファイルとフォルダが混ざったリスト → 実在する .sst ファイルの一覧（フォルダは再帰）と、見つからないパス。"""
+    files, missing, seen = [], [], set()
+    for p in paths or []:
+        if os.path.isdir(p):
+            found = []
+            for dp, _dn, fn in os.walk(p):
+                found += [os.path.join(dp, x) for x in fn if x.lower().endswith(".sst")]
+            cand = sorted(found, key=str.lower)
+        elif os.path.isfile(p):
+            cand = [p]
+        else:
+            missing.append(p)
+            continue
+        for f in cand:
+            k = os.path.normcase(os.path.abspath(f))
+            if k not in seen:
+                seen.add(k)
+                files.append(f)
+    return files, missing
+
+
+# ============================================================================
 # Глоссарий и конфиг
 # ============================================================================
 class Glossary:
@@ -3346,6 +3531,7 @@ DEFAULT_CONFIG = {
     "translate_skse_menu": False,
     "status_filter": ["done", "stale", "ja", "todo", "none"], "notify_done": True,
     "batch_size": 1,
+    "sst_paths": [],
 }
 
 
@@ -3445,6 +3631,10 @@ class TranslationDialog(QtWidgets.QDialog):
         cfg_err = self.cfg.pop("_cfg_err", None)
         if cfg_err:
             self._log("err", _tx(f"Конфиг не загружен: {cfg_err}", f"設定を読み込めませんでした: {cfg_err}"))
+        if self.cfg.get("sst_paths"):
+            QtCore.QTimer.singleShot(0, self._sst_reload)
+        else:
+            self._sst_update_tip()
         if HAS_MOBASE and getattr(plugin, "_organizer", None):
             QtCore.QTimer.singleShot(100, self.refresh_mods)
         else:
@@ -3484,7 +3674,8 @@ class TranslationDialog(QtWidgets.QDialog):
         if hasattr(self, "btn_replace"):
             self.btn_replace.setText(self.tr("btn_replace"))
         if hasattr(self, "btn_sst"):
-            self.btn_sst.setToolTip(self.tr("tip_load_sst"))
+            self._build_sst_menu()
+            self._sst_update_tip()
         if hasattr(self, "chk_risky"):
             self.chk_risky.setToolTip(self.tr("tip_risky"))
         if hasattr(self, "chk_pex"):
@@ -3842,14 +4033,13 @@ class TranslationDialog(QtWidgets.QDialog):
                      (self.btn_refresh, "refresh"), (self.btn_addf, "add_folders"),
                      (self.btn_openfile, "btn_open_file"), (self.btn_sst, "btn_load_sst")):
             self._tr_lbl(b, k)
-        self.btn_sst.setToolTip(self.tr("tip_load_sst"))
+        self._build_sst_menu()
         self.btn_all.clicked.connect(lambda: self._set_all_mods(True))
         self.btn_none.clicked.connect(lambda: self._set_all_mods(False))
         self.btn_todo.clicked.connect(self._select_todo_mods)
         self.btn_refresh.clicked.connect(self.refresh_mods)
         self.btn_addf.clicked.connect(self.add_folders)
         self.btn_openfile.clicked.connect(self.open_single_file)
-        self.btn_sst.clicked.connect(self._load_sst_dictionary)
         for b in (self.btn_all, self.btn_none, self.btn_todo, self.btn_refresh, self.btn_addf,
                   self.btn_openfile, self.btn_sst):
             mrow.addWidget(b)
@@ -4321,33 +4511,11 @@ class TranslationDialog(QtWidgets.QDialog):
         self._sync_out_name()
 
     # ── Словарь терминов .sst (Skyrim String Translator / xTranslator) ─────
-    @staticmethod
-    def _parse_sst_line(line):
-        """Разбор строки словаря .sst: «оригинал \\t перевод» или «оригинал=перевод»."""
-        if "\t" in line:
-            parts = line.split("\t")
-            if len(parts) < 2:
-                return None
-            orig, dst = parts[0], parts[1]
-        elif "=" in line:
-            orig, dst = line.split("=", 1)
-        else:
-            return None
-        orig, dst = orig.strip(), dst.strip()
-        if not orig or not dst:
-            return None
-        return orig, dst
-
-    @staticmethod
-    def _decode_sst(raw):
-        """Декодирует .sst с автоопределением кодировки → (text, enc) или (None, None)."""
-        enc = detect_text_encoding(raw)
-        for cand in (enc, "utf-8", "utf-16-le", "utf-16-be", "cp1251", "cp1252"):
-            try:
-                return raw.decode(cand), cand
-            except (UnicodeDecodeError, LookupError):
-                continue
-        return None, None
+    # 読み込んだファイル・フォルダは cfg["sst_paths"] に保存し、次回起動時に自動で読み込む。
+    # フォルダは毎回中身を探し直すので、xTranslator の UserDictionaries を指定しておけば
+    # 後から増えた辞書も拾える。
+    _parse_sst_line = staticmethod(_sst_parse_line)
+    _decode_sst = staticmethod(_sst_decode_text)
 
     def _sst_lookup(self, src):
         """Точное совпадение со словарём .sst (плюс вариант без пробелов по краям)."""
@@ -4358,56 +4526,118 @@ class TranslationDialog(QtWidgets.QDialog):
             s = src.strip()
             if s and s != src:
                 res = self.sst_dict.get(s)
+                if res is not None:   # 前後の空白は原文のまま残す
+                    res = src[:len(src) - len(src.lstrip())] + res + src[len(src.rstrip()):]
         return res
 
-    def _load_sst_dictionary(self):
-        """QFileDialog → чтение .sst (авто-кодировка) → self.sst_dict.update(pairs)."""
-        start = (os.path.dirname(self.sst_files[-1]) if self.sst_files
-                 else os.path.expanduser("~"))
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, self.tr("btn_load_sst"), start,
+    def _build_sst_menu(self):
+        m = QtWidgets.QMenu(self.btn_sst)
+        m.addAction(self.tr("sst_add_files"), self._sst_add_files)
+        m.addAction(self.tr("sst_add_folder"), self._sst_add_folder)
+        m.addSeparator()
+        m.addAction(self.tr("sst_reload"), lambda: self._sst_reload(interactive=True))
+        m.addAction(self.tr("sst_clear"), self._sst_clear)
+        self.btn_sst.setMenu(m)
+
+    def _sst_update_tip(self):
+        if not hasattr(self, "btn_sst"):
+            return
+        tip = self.tr("tip_load_sst")
+        paths = self.cfg.get("sst_paths") or []
+        tip += "\n\n" + self.tr("sst_status").format(total=len(self.sst_dict), files=len(self.sst_files))
+        if paths:
+            tip += "\n" + "\n".join(paths[:10]) + ("\n…" if len(paths) > 10 else "")
+        self.btn_sst.setToolTip(tip)
+
+    def _sst_start_dir(self):
+        paths = self.cfg.get("sst_paths") or []
+        if paths:
+            last = paths[-1]
+            return last if os.path.isdir(last) else os.path.dirname(last)
+        return os.path.expanduser("~")
+
+    def _sst_add_files(self):
+        files, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self, self.tr("btn_load_sst"), self._sst_start_dir(),
             _tx("Skyrim String Translator (*.sst);;Все файлы (*)", "Skyrim String Translator (*.sst);;すべてのファイル (*)"))
-        if not path:
-            return
-        try:
-            with open(path, "rb") as f:
-                raw = f.read()
-        except OSError as e:
-            self._log("err", f"{self.tr('sst_error')} {e}")
-            QtWidgets.QMessageBox.critical(
-                self, self.tr("btn_load_sst"), f"{self.tr('sst_error')}\n{path}\n{e}")
-            return
-        text, enc = self._decode_sst(raw)
-        if text is None:
-            self._log("err", f"{self.tr('sst_error')} {os.path.basename(path)}: {self.tr('sst_bad_enc')}")
-            QtWidgets.QMessageBox.critical(
-                self, self.tr("btn_load_sst"),
-                f"{self.tr('sst_error')}\n{path}\n{self.tr('sst_bad_enc')}")
-            return
-        try:
-            pairs = {}
-            for line in text.replace("\x00", "").splitlines():
-                line = line.strip().lstrip("\ufeff")
-                if not line:
-                    continue
-                parsed = self._parse_sst_line(line)
-                if parsed:
-                    pairs[parsed[0]] = parsed[1]
-        except Exception as e:
-            self._log("err", f"{self.tr('sst_error')} {e}")
-            QtWidgets.QMessageBox.critical(
-                self, self.tr("btn_load_sst"), f"{self.tr('sst_error')}\n{path}\n{e}")
-            return
-        if not pairs:
-            self._log("warn", f"{self.tr('sst_no_pairs')} ({os.path.basename(path)}, {enc})")
-            QtWidgets.QMessageBox.warning(
-                self, self.tr("btn_load_sst"), f"{self.tr('sst_no_pairs')}\n{path}")
-            return
-        self.sst_dict.update(pairs)
-        if path not in self.sst_files:
-            self.sst_files.append(path)
-        self._log("ok", self.tr("sst_loaded").format(
-            n=len(pairs), path=os.path.basename(path), total=len(self.sst_dict)))
+        if files:
+            self._sst_add_paths(files)
+
+    def _sst_add_folder(self):
+        d = QtWidgets.QFileDialog.getExistingDirectory(self, self.tr("sst_add_folder"), self._sst_start_dir())
+        if d:
+            self._sst_add_paths([d])
+
+    # 互換: 以前のボタン処理名
+    _load_sst_dictionary = _sst_add_files
+
+    def _sst_add_paths(self, paths):
+        paths = [os.path.normpath(p) for p in paths]
+        n = self._sst_load(paths, interactive=True)
+        if n:
+            cur = list(self.cfg.get("sst_paths") or [])
+            keys = {os.path.normcase(x) for x in cur}
+            cur += [p for p in paths if os.path.normcase(p) not in keys]
+            self.cfg["sst_paths"] = cur
+            save_config(self.cfg, self._log)
+        self._sst_update_tip()
+
+    def _sst_reload(self, interactive=False):
+        self.sst_dict = {}
+        self.sst_files = []
+        paths = self.cfg.get("sst_paths") or []
+        if paths:
+            self._sst_load(paths, interactive=interactive)
+        self._sst_update_tip()
+
+    def _sst_clear(self):
+        self.sst_dict = {}
+        self.sst_files = []
+        self.cfg["sst_paths"] = []
+        save_config(self.cfg, self._log)
+        self._log("info", self.tr("sst_cleared"))
+        self._sst_update_tip()
+
+    def _sst_load(self, paths, interactive=False):
+        """ファイル/フォルダを読み込んで self.sst_dict に追加する。追加した語数を返す。
+
+        後から読んだ辞書が同じ原文の訳を上書きする（xTranslator と同じく後勝ち）。
+        """
+        files, missing = expand_sst_paths(paths)
+        for m in missing:
+            self._log("warn", f"{self.tr('sst_missing')} {m}")
+        added, n_ok, failed = {}, 0, []
+        for path in files:
+            try:
+                with open(path, "rb") as f:
+                    raw = f.read()
+                pairs, fmt = read_sst_pairs(raw)
+            except Exception as e:
+                failed.append(f"{os.path.basename(path)}: {e}")
+                continue
+            if pairs is None:
+                reason = self.tr("sst_bad_enc") if fmt == "bad_enc" else self.tr("sst_unknown_fmt")
+                failed.append(f"{os.path.basename(path)}: {reason}")
+                continue
+            n_ok += 1
+            added.update(pairs)
+            if path not in self.sst_files:
+                self.sst_files.append(path)
+            if len(files) <= 5:
+                self._log("ok", self.tr("sst_loaded").format(
+                    n=len(pairs), path=f"{os.path.basename(path)}, {fmt}", total=len(self.sst_dict) + len(added)))
+        for msg in failed[:20]:
+            self._log("err", f"{self.tr('sst_error')} {msg}")
+        if len(failed) > 20:
+            self._log("err", f"{self.tr('sst_error')} … +{len(failed) - 20}")
+        self.sst_dict.update(added)
+        if len(files) > 5 or not files:
+            self._log("ok" if added else "warn", self.tr("sst_loaded_many").format(
+                files=n_ok, n=len(added), total=len(self.sst_dict)))
+        if interactive and not added:
+            msg = self.tr("sst_no_pairs") if not failed else "\n".join(failed[:10])
+            QtWidgets.QMessageBox.warning(self, self.tr("btn_load_sst"), msg)
+        return len(added)
 
     def _fill_mod_table(self):
         self.mod_table.blockSignals(True)
@@ -5452,10 +5682,10 @@ class TranslationDialog(QtWidgets.QDialog):
                 return
 
             # Словарь .sst: точное совпадение переводится из словаря, без LLM и без троттлинга
-            sst_res = self._sst_lookup(self.units[batch[0]]["src"])
-            if sst_res is not None:
-                self.stats["sst"] += 1
-                self.q.put(("done", run_id, batch, [sst_res], False, "sst"))
+            sst_res = [self._sst_lookup(self.units[i]["src"]) for i in batch]
+            if all(r is not None for r in sst_res):
+                self.stats["sst"] += len(batch)
+                self.q.put(("done", run_id, batch, sst_res, False, "sst"))
                 continue
 
             self._throttle()

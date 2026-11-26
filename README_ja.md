@@ -1,4 +1,4 @@
-# MO2 Translation Tool 日本語化・改造版（3.0.1-ja.5）
+# MO2 Translation Tool 日本語化・改造版（3.0.1-ja.6）
 
 Mod Organizer 2 の中で Mod を翻訳するプラグインです。LLM や機械翻訳を使います。
 [InfernoKgn さんの MO2 Translation Tool 3.0.1](https://www.nexusmods.com/skyrimspecialedition/mods/197796) をもとに、日本語 UI の追加、不具合の修正、機能の追加をしました。
@@ -33,6 +33,11 @@ Mod Organizer 2 の中で Mod を翻訳するプラグインです。LLM や機�
 - 翻訳先の初期値を日本語にしました。
 
 ### 新機能
+- **xTranslator の SST 辞書で先に訳す**：「SST 辞書」ボタンのメニューから `.sst` ファイルまたはフォルダ（xTranslator の `UserDictionaries` など）を追加すると、原文と完全に一致する文字列は LLM を呼ばずに辞書の訳を使います。
+  - xTranslator のバイナリ形式（SSU2／SSU8／SSU9 で確認）と、「原文<TAB>訳文」形式のテキストを読めます。原作のボタンはテキスト形式しか読めず、xTranslator の辞書は実質使えませんでした。
+  - 追加したファイル・フォルダは記憶し、次に開いたときに自動で読み込みます。フォルダは毎回中身を探し直します。「辞書をすべて外す」で解除できます。
+  - 未翻訳のエントリ（訳文が空・原文と同じ）は使いません。同じ原文に複数の訳がある場合は、いちばん多い訳を使います。後から読んだ辞書が優先されます。
+  - 辞書の訳は翻訳キャッシュには入れません。プレビュー表では辞書由来の訳に印が付きます。
 - **元の Mod フォルダに直接書き込む**：訳を元の Mod の中に追加します。
   - `_japanese.txt`、`_japanese.strings`、DSD 用の json は別名で追加します。同じ名前のファイル（作者の訳など）がすでにあれば上書きせず、その元ファイルは翻訳もしません。
   - MCM の `config.json` は、英語版を `config.json.bak_en` に退避してから上書きします。元に戻すときは、`.bak_en` を `config.json` にリネームしてください。

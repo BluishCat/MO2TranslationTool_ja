@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MO2 Translation Tool — v3.0.1-ja.6（日本語化・改造版）
+MO2 Translation Tool — v3.0.1-ja.7（日本語化・改造版）
 =====================================================
 
 Mod Organizer 2 用の Mod 翻訳プラグイン（LLM / 機械翻訳）。
@@ -518,7 +518,7 @@ def has_mixed_language(src, dst, target_lang):
 # Константы
 # ============================================================================
 APP_NAME = "MO2 Translation Tool"
-APP_VERSION = "3.0.1-ja.6"
+APP_VERSION = "3.0.1-ja.7"
 CONFIG_NAME = "MO2 Translation Tool.config.json"
 GLOSSARY_NAME = "MO2 Translation Tool.glossary.json"
 
@@ -611,6 +611,10 @@ T = {
     "sst_unknown_fmt": ("неизвестный формат .sst", "unknown .sst format"),
     "sst_loaded_many": ("Словари .sst: {files} файлов, {n} строк. Всего в словаре: {total}",
                         "SST dictionaries: {files} files, {n} strings. Dictionary total: {total}"),
+    "sst_hints": ("Передавать имена из словаря LLM как глоссарий", "Pass dictionary names to the LLM as glossary hints"),
+    "tip_sst_hints": ("Короткие имена (люди, места, предметы) из словаря .sst, найденные в строке, передаются LLM как термины.",
+                      "Short names (people, places, items) from the .sst dictionaries that appear in a line are given to the LLM as terminology."),
+    "sst_hints_on": ("Подсказки терминов из .sst: {n} имён", "SST terminology hints: {n} names"),
     "tip_len_warn": ("⚠️ Перевод слишком длинный, может не поместиться в интерфейсе",
                      "⚠️ The translation is too long — it may not fit in the interface"),
     "tip_len_note": ("Длина: {n} против {m} символов", "Length: {n} vs {m} characters"),
@@ -782,6 +786,10 @@ T_JA = {
     "sst_missing": "辞書のパスが見つかりません:",
     "sst_unknown_fmt": "未対応の .sst 形式です",
     "sst_loaded_many": ".sst 辞書: {files} ファイル、{n} 件を読み込みました。辞書の合計: {total}",
+    "sst_hints": "辞書の固有名詞を LLM に用語として渡す",
+    "tip_sst_hints": ("SST 辞書のうち短い名前（人名・地名・アイテム名など）が文中に出てきたら、"
+                      "その訳語を用語集として LLM に渡します。文全体が辞書と一致しない行でも訳語が揃います。"),
+    "sst_hints_on": "SST 辞書の用語ヒント: {n} 語",
     "tip_len_warn": "⚠️ 訳文が長すぎます。UI に収まらない可能性があります",
     "tip_len_note": "長さ: {n} 文字（原文 {m} 文字）",
     "tip_mixed": "訳文に英単語が残っています",
@@ -1410,13 +1418,14 @@ class Translator:
 
     def __init__(self, client, protector, system_prompt, src, tgt,
                  glossary=None, repair=True, dry_run=False, unit_convert=False,
-                 log=None):
+                 log=None, sst_terms=None):
         self.client = client
         self.protector = protector
         self.system_prompt = system_prompt
         self.src = src
         self.tgt = tgt
         self.glossary = glossary or {}
+        self.sst_terms = sst_terms or {}   # SST 辞書の短い名前（原文 → 訳）。用語ヒント用
         self.repair = repair
         self.dry_run = dry_run
         self.unit_convert = unit_convert
@@ -1435,6 +1444,9 @@ class Translator:
                     hits.append((term, trans))
             elif needle in blob:
                 hits.append((term, trans))
+        if self.sst_terms:
+            own = {h[0].strip().lower() for h in hits}
+            hits += [h for h in sst_term_hits(lines, self.sst_terms) if h[0].lower() not in own]
         return hits
 
     def _system(self, n, numbered, hits):
@@ -3485,6 +3497,68 @@ def expand_sst_paths(paths):
     return files, missing
 
 
+_SST_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9']*(?:-[A-Za-z0-9']+)*")
+SST_TERM_MAX_WORDS = 4
+SST_TERM_MAX_HITS = 15
+_SST_TITLE_SMALL = frozenset("of the and a an to in on at for from with by or de".split())
+
+
+def build_sst_terms(sst_dict):
+    """SST 辞書から、LLM に用語ヒントとして渡す短い名前（人名・地名・アイテム名など）を選ぶ。
+
+    文ではなく名前らしいものだけ: 1〜4 語、大文字で始まる、文末記号・改行・プレースホルダーなし、
+    訳文も短い。1 語の場合は 3 文字以上。
+    """
+    terms = {}
+    for src, dst in sst_dict.items():
+        if src != src.strip() or not src[:1].isupper() or not src[:1].isascii():
+            continue
+        if len(src) > 40 or len(dst) > 40 or "\n" in src or "\n" in dst or "\r" in dst:
+            continue
+        if src[-1] in ".?!:;," or any(c in src for c in "<>{}[]%$|\\/\"="):
+            continue
+        words = src.split()
+        if not (1 <= len(words) <= SST_TERM_MAX_WORDS):
+            continue
+        if len(words) == 1 and len(src) < 3:
+            continue
+        if not all(_SST_WORD_RE.fullmatch(w) for w in words):
+            continue
+        # 名前らしい書き方（Title Case）だけ。"Just be patient" のような短い文を除く
+        if not all(w[:1].isupper() or w.isdigit() or w.lower() in _SST_TITLE_SMALL for w in words[1:]):
+            continue
+        if not dst.strip() or dst == src:
+            continue
+        terms[src] = dst.strip()
+    return terms
+
+
+def sst_term_hits(lines, terms, limit=SST_TERM_MAX_HITS):
+    """行の中に出てくる SST の名前を探す（大文字小文字は区別、単語単位）。
+
+    1〜4 語の連なりを辞書で引くので、辞書が大きくても速い。長い名前を優先し、
+    長い名前に含まれる短い名前（"Iron Sword" の中の "Iron" など）は除く。
+    """
+    found = {}
+    for line in lines:
+        spans = [(m.start(), m.end()) for m in _SST_WORD_RE.finditer(line)]
+        for i in range(len(spans)):
+            for j in range(min(len(spans), i + SST_TERM_MAX_WORDS) - 1, i - 1, -1):
+                phrase = line[spans[i][0]:spans[j][1]]
+                if phrase in terms:
+                    found.setdefault(phrase, terms[phrase])
+                    break
+    keys = sorted(found, key=len, reverse=True)
+    picked = []
+    for k in keys:
+        if any(re.search(rf"(?<![A-Za-z]){re.escape(k)}(?![A-Za-z])", p) for p in picked):
+            continue
+        picked.append(k)
+        if len(picked) >= limit:
+            break
+    return [(k, found[k]) for k in picked]
+
+
 # ============================================================================
 # Глоссарий и конфиг
 # ============================================================================
@@ -3532,6 +3606,7 @@ DEFAULT_CONFIG = {
     "status_filter": ["done", "stale", "ja", "todo", "none"], "notify_done": True,
     "batch_size": 1,
     "sst_paths": [],
+    "sst_hints": True,
 }
 
 
@@ -4537,7 +4612,30 @@ class TranslationDialog(QtWidgets.QDialog):
         m.addSeparator()
         m.addAction(self.tr("sst_reload"), lambda: self._sst_reload(interactive=True))
         m.addAction(self.tr("sst_clear"), self._sst_clear)
+        m.addSeparator()
+        act = m.addAction(self.tr("sst_hints"))
+        act.setCheckable(True)
+        act.setChecked(bool(self.cfg.get("sst_hints", True)))
+        act.setToolTip(self.tr("tip_sst_hints"))
+        act.toggled.connect(self._sst_set_hints)
+        m.setToolTipsVisible(True)
         self.btn_sst.setMenu(m)
+
+    def _sst_set_hints(self, on):
+        self.cfg["sst_hints"] = bool(on)
+        save_config(self.cfg, self._log)
+        self._sst_update_tip()
+
+    def _sst_hint_terms(self):
+        """翻訳開始時に Translator へ渡す用語ヒント（オフなら空）。"""
+        if not self.cfg.get("sst_hints", True) or not self.sst_dict:
+            return {}
+        if getattr(self, "_sst_terms_src", None) is not self.sst_dict or self._sst_terms_n != len(self.sst_dict):
+            self._sst_terms = build_sst_terms(self.sst_dict)
+            self._sst_terms_src, self._sst_terms_n = self.sst_dict, len(self.sst_dict)
+        if self._sst_terms:
+            self._log("info", self.tr("sst_hints_on").format(n=len(self._sst_terms)))
+        return self._sst_terms
 
     def _sst_update_tip(self):
         if not hasattr(self, "btn_sst"):
@@ -4545,6 +4643,8 @@ class TranslationDialog(QtWidgets.QDialog):
         tip = self.tr("tip_load_sst")
         paths = self.cfg.get("sst_paths") or []
         tip += "\n\n" + self.tr("sst_status").format(total=len(self.sst_dict), files=len(self.sst_files))
+        if self.cfg.get("sst_hints", True):
+            tip += "\n" + self.tr("sst_hints")
         if paths:
             tip += "\n" + "\n".join(paths[:10]) + ("\n…" if len(paths) > 10 else "")
         self.btn_sst.setToolTip(tip)
@@ -5202,7 +5302,7 @@ class TranslationDialog(QtWidgets.QDialog):
                 self.cfg["source"], self.cfg["target"], self.glossary.items,
                 repair=True, dry_run=self.cfg["dry_run"],
                 unit_convert=self.cfg["convert_units"],
-                log=self._log)
+                log=self._log, sst_terms=self._sst_hint_terms())
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, APP_NAME, _tx(f"Ошибка инициализации переводчика:\n{e}", f"翻訳エンジンの初期化エラー:\n{e}"))
             return
@@ -7091,7 +7191,7 @@ class TranslationDialog(QtWidgets.QDialog):
                 self.cfg["source"], self.cfg["target"], self.glossary.items,
                 repair=True, dry_run=self.cfg["dry_run"],
                 unit_convert=self.cfg["convert_units"],
-                log=self._log)
+                log=self._log, sst_terms=self._sst_hint_terms())
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, APP_NAME, _tx(f"Ошибка инициализации переводчика:\n{e}", f"翻訳エンジンの初期化エラー:\n{e}"))
             return

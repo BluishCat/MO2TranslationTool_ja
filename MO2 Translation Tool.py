@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MO2 Translation Tool — v3.0.1-ja.7（日本語化・改造版）
+MO2 Translation Tool — v3.0.1-ja.8（日本語化・改造版）
 =====================================================
 
 Mod Organizer 2 用の Mod 翻訳プラグイン（LLM / 機械翻訳）。
@@ -518,7 +518,7 @@ def has_mixed_language(src, dst, target_lang):
 # Константы
 # ============================================================================
 APP_NAME = "MO2 Translation Tool"
-APP_VERSION = "3.0.1-ja.7"
+APP_VERSION = "3.0.1-ja.8"
 CONFIG_NAME = "MO2 Translation Tool.config.json"
 GLOSSARY_NAME = "MO2 Translation Tool.glossary.json"
 
@@ -1252,8 +1252,11 @@ class OpenAIClient:
 
 
 class DeepLClient:
-    def __init__(self, key, target="ru", timeout=60):
+    BATCH_SIZE = 50
+
+    def __init__(self, key, target="ru", timeout=60, retries=3):
         self.key = key
+        self.retries = retries
         self.target = target.upper()
         # Маппинг для DeepL
         if self.target == "ZH-CN" or self.target == "ZH":
@@ -1346,68 +1349,122 @@ class YandexClient:
 
 
 class GoogleFreeClient:
-    def __init__(self, src="en", tgt="ru", timeout=30):
+    """Google 翻訳（無料・非公式の Web API）。
+
+    translate_a/t に q を複数付けて POST すると、訳が同じ順の配列で返る。
+    1 行ずつ投げていた頃より、リクエスト数が 1/BATCH_LINES 程度になる。
+    まとめ送りが使えない応答のときは、その分だけ従来の 1 行ずつの API で訳す。
+    """
+    BATCH_LINES = 50      # 1 リクエストの最大行数
+    BATCH_CHARS = 4500    # 1 リクエストの最大文字数の目安（1 行だけで超える場合はその行単独）
+    MULTI_URL = "https://translate.googleapis.com/translate_a/t"
+    SINGLE_URL = "https://translate.google.com/translate_a/single"
+
+    def __init__(self, src="en", tgt="ru", timeout=30, retries=4):
         self.src = src
         self.tgt = tgt
         self.timeout = timeout
+        self.retries = retries
         # Расширенные заголовки, чтобы имитировать реальный браузер Chrome
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://translate.google.com/"
+            "Referer": "https://translate.google.com/",
+            "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
         }
 
+    @classmethod
+    def chunk_indices(cls, texts):
+        """texts を BATCH_LINES 行・BATCH_CHARS 文字ごとの添字リストに分ける。"""
+        chunks, cur, chars = [], [], 0
+        for i, t in enumerate(texts):
+            if cur and (len(cur) >= cls.BATCH_LINES or chars + len(t) > cls.BATCH_CHARS):
+                chunks.append(cur)
+                cur, chars = [], 0
+            cur.append(i)
+            chars += len(t)
+        if cur:
+            chunks.append(cur)
+        return chunks
+
     def translate_lines(self, lines, cancel):
-        results = []
-        for ln in lines:
+        out = list(lines)
+        todo = [i for i, ln in enumerate(lines) if ln.strip()]
+        for chunk in self.chunk_indices([lines[i] for i in todo]):
             if cancel.is_set():
                 raise LLMError("Отменено")
-            if not ln.strip():
-                results.append(ln)
-                continue
+            idxs = [todo[k] for k in chunk]
+            res = self._translate_chunk([lines[i] for i in idxs], cancel)
+            for i, r in zip(idxs, res):
+                out[i] = r if r else lines[i]
+        return out
 
-            params = {
-                "client": "gtx",
-                "sl": self.src,
-                "tl": self.tgt,
-                "dt": "t",
-                "q": ln
-            }
-            # Используем домен translate.google.com (он реже блокирует, чем googleapis)
-            url = "https://translate.google.com/translate_a/single?" + urlencode(params)
-            
-            max_retries = 3
-            success = False
-            
-            for attempt in range(max_retries):
-                if cancel.is_set():
-                    raise LLMError("Отменено")
-                try:
-                    req = urlrequest.Request(url, headers=self.headers)
-                    with urlrequest.urlopen(req, timeout=self.timeout) as resp:
-                        data = json.loads(resp.read().decode("utf-8"))
-                        translated = "".join(seg[0] for seg in data[0] if seg and seg[0])
-                        results.append(translated if translated else ln)
-                    success = True
-                    break # Успех! Выходим из цикла попыток
-                except urlerror.HTTPError as e:
-                    if e.code == 429:
-                        if attempt == max_retries - 1:
-                            raise LLMError(_tx("Google Error 429: Превышен лимит запросов. Убедитесь, что Потоки = 1, и увеличьте Задержку до 3000 мс.", "Google Error 429: リクエスト上限を超えました。スレッド数を 1 にし、待機を 3000 ms まで増やしてください。"))
-                        # Если 429, ждем 5 секунд и пробуем снова
-                        time.sleep(5) 
-                    else:
-                        raise LLMError(f"Google HTTP error: {e.code}")
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        raise LLMError(f"Google translate error: {e}")
-                    time.sleep(3)
-            
-            if not success:
-                results.append(ln)
-                
-        return results
+    def _request(self, url, query, form, cancel):
+        """POST して JSON を返す。429 と 5xx・通信エラーは待って再試行する。"""
+        full = url + "?" + urlencode(query)
+        body = urlencode(form).encode("utf-8")
+        for attempt in range(self.retries + 1):
+            if cancel.is_set():
+                raise LLMError("Отменено")
+            try:
+                req = urlrequest.Request(full, data=body, headers=self.headers, method="POST")
+                with urlrequest.urlopen(req, timeout=self.timeout) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except urlerror.HTTPError as e:
+                if e.code == 429:
+                    if attempt >= self.retries:
+                        raise LLMError(_tx("Google Error 429: Превышен лимит запросов. Убедитесь, что Потоки = 1, и увеличьте Задержку до 3000 мс.", "Google Error 429: リクエスト上限を超えました。スレッド数を 1 にし、待機を 3000 ms まで増やしてください。"))
+                    _sleep_retry(attempt + 2, cancel)   # 6.4 s, 12.8 s, 25.6 s, 30 s
+                    continue
+                if e.code in (500, 502, 503, 504) and attempt < self.retries:
+                    _sleep_retry(attempt, cancel)
+                    continue
+                raise LLMError(f"Google HTTP error: {e.code}")
+            except ValueError as e:      # JSON でない応答
+                raise LLMError(f"Google translate error: {e}")
+            except (urlerror.URLError, OSError) as e:
+                if attempt >= self.retries:
+                    raise LLMError(f"Google translate error: {getattr(e, 'reason', e)}")
+                _sleep_retry(attempt, cancel)
+        raise LLMError("Google translate error")
+
+    def _translate_chunk(self, texts, cancel):
+        data = self._request(
+            self.MULTI_URL,
+            {"client": "gtx", "sl": self.src, "tl": self.tgt, "format": "text"},
+            [("q", t) for t in texts], cancel)
+        res = self._parse_multi(data, len(texts))
+        if res is not None:
+            return res
+        return [self._translate_one(t, cancel) for t in texts]
+
+    @staticmethod
+    def _parse_multi(data, n):
+        """translate_a/t の応答 → 訳のリスト。形が想定外なら None。
+        要素は "訳" か、sl=auto のとき ["訳", "検出言語"]。"""
+        if isinstance(data, str):
+            data = [data]
+        if not isinstance(data, list) or len(data) != n:
+            return None
+        out = []
+        for item in data:
+            if isinstance(item, list) and item and isinstance(item[0], str):
+                item = item[0]
+            if not isinstance(item, str):
+                return None
+            out.append(item)
+        return out
+
+    def _translate_one(self, text, cancel):
+        data = self._request(
+            self.SINGLE_URL,
+            {"client": "gtx", "sl": self.src, "tl": self.tgt, "dt": "t"},
+            [("q", text)], cancel)
+        try:
+            return "".join(seg[0] for seg in data[0] if seg and seg[0]) or text
+        except (TypeError, IndexError):
+            return text
 
 
 # ============================================================================
@@ -1655,6 +1712,26 @@ class Translator:
                 
         return src
         
+    def translate_mt_bulk(self, srcs, cancel):
+        """機械翻訳 API 用：srcs をまとめて 1 回で訳し、行ごとに後処理とプレースホルダー確認をする。
+        プレースホルダーを失った行は原文のまま返す（同じ入力を送り直しても結果は同じなので再試行しない）。"""
+        prot = [self.protector.protect(s) for s in srcs]
+        if self.dry_run:
+            outs = [p for p, _t in prot]
+        else:
+            outs = self.client.translate_lines([p for p, _t in prot], cancel)
+        if len(outs) != len(srcs):
+            raise LLMError(_tx("Неверное число строк в ответе", "応答の行数が合いません"))
+        res = []
+        for s, (_p, toks), o in zip(srcs, prot, outs):
+            r = self._post(o, s, toks)
+            ok, lost = check_placeholders(s, r)
+            if not ok:
+                self.log("err", _tx(f"Потеряны плейсхолдеры: {lost}. Оставлен оригинал. [{s[:30]}]", f"プレースホルダーが失われました: {lost}。原文のままにします。[{s[:30]}]"))
+                r = s
+            res.append(r)
+        return res
+
     def fix_placeholders_batch(self, bad_items, cancel):
         """Принимает список (src, dst) с потерянными токенами и просит LLM исправить их."""
         if not bad_items:
@@ -3934,7 +4011,9 @@ class TranslationDialog(QtWidgets.QDialog):
         self.sp_batch.setRange(1, 100)
         self.sp_batch.setToolTip(
             _tx("Сколько строк отправлять в LLM за один запрос. "
-            "Для локальных моделей рекомендуется 1-3.", "1回のリクエストで LLM に送る行数。ローカルモデルでは 1〜3 を推奨。"))
+            "Для локальных моделей рекомендуется 1-3.\n"
+            "Google Translate: не используется (до 50 строк за запрос автоматически).", "1回のリクエストで LLM に送る行数。ローカルモデルでは 1〜3 を推奨。\n"
+            "Google 翻訳では使いません（最大 50 行ずつ自動でまとめて送ります）。"))
 
         self.chk_dry = QtWidgets.QCheckBox()
         self.chk_bsa = QtWidgets.QCheckBox()
@@ -5749,7 +5828,20 @@ class TranslationDialog(QtWidgets.QDialog):
         if not active_jobs:
             return []
             
-        return [active_jobs[i:i + batch_size] for i in range(0, len(active_jobs), batch_size)]
+        return self._job_batches(active_jobs)
+
+    def _job_batches(self, idxs):
+        """Google 翻訳：同じ原文を同じバッチに集め、原文の種類で BATCH_LINES 行ずつ（文字数上限つき）。
+        それ以外：「1回の行数」ずつ。"""
+        if self.cfg.get("backend") == "Google Translate":
+            groups = {}
+            for i in idxs:
+                groups.setdefault(self.units[i]["src"], []).append(i)
+            texts = list(groups)
+            return [[i for k in chunk for i in groups[texts[k]]]
+                    for chunk in GoogleFreeClient.chunk_indices(texts)]
+        batch_size = max(1, self.cfg.get("batch_size", 1))
+        return [idxs[i:i + batch_size] for i in range(0, len(idxs), batch_size)]
 
     def _throttle(self):
         delay_ms = self.cfg.get("delay_ms", 0)
@@ -5782,54 +5874,89 @@ class TranslationDialog(QtWidgets.QDialog):
                 return
 
             # Словарь .sst: точное совпадение переводится из словаря, без LLM и без троттлинга
-            sst_res = [self._sst_lookup(self.units[i]["src"]) for i in batch]
-            if all(r is not None for r in sst_res):
-                self.stats["sst"] += len(batch)
-                self.q.put(("done", run_id, batch, sst_res, False, "sst"))
+            rest, sst_idx, sst_res = [], [], []
+            for i in batch:
+                r = self._sst_lookup(self.units[i]["src"])
+                if r is None:
+                    rest.append(i)
+                else:
+                    sst_idx.append(i)
+                    sst_res.append(r)
+            if sst_idx:
+                self.stats["sst"] += len(sst_idx)
+                self.q.put(("done", run_id, sst_idx, sst_res, False, "sst"))
+
+            # 訳さない行（ホットキー・1 文字、既に翻訳先の言語）とキャッシュにある行を先に片付ける
+            todo, ready_idx, ready_res = [], [], []
+            for i in rest:
+                src_text = self.units[i]["src"]
+                # --- ЗАЩИТА ОТ ХОТКЕЕВ И ОДИНОЧНЫХ СИМВОЛОВ ---
+                # Если осталась 1 буква (например "Y", "N", "A"), не отправляем в LLM
+                if len(PLACEHOLDER_RE.sub("", src_text).strip()) <= 1:
+                    ready_idx.append(i)
+                    ready_res.append(src_text)
+                    continue
+                # 既に翻訳先の言語（例: かな・漢字を含む）なら LLM に送らない。キャッシュより先に判定
+                # するので、過去に誤訳されてキャッシュに残った結果も使われない。
+                if already_in_target(src_text, self.cfg.get("target", ""), self.cfg.get("source", "en")):
+                    ready_idx.append(i)
+                    ready_res.append(src_text)
+                    continue
+                # ПРОВЕРКА КЭША: если строка уже переводилась, берем готовое
+                cache_key = hashlib.md5(src_text.encode("utf-8")).hexdigest()
+                if cache_key in self.translation_cache:
+                    ready_idx.append(i)
+                    ready_res.append(self.translation_cache[cache_key])
+                    continue
+                todo.append(i)
+            if ready_idx:
+                self.q.put(("done", run_id, ready_idx, ready_res, False))
+            if not todo:
                 continue
 
-            self._throttle()
-            
-            idx = batch[0]
-            src_text = self.units[idx]["src"]
-            file_context = self.units[idx].get("rel", "")
-            
-            # --- ЗАЩИТА ОТ ХОТКЕЕВ И ОДИНОЧНЫХ СИМВОЛОВ ---
-            # Убираем все теги, плейсхолдеры и пробелы
-            clean_text = PLACEHOLDER_RE.sub("", src_text).strip()
-            # Если осталась 1 буква (например "Y", "N", "A"), не отправляем в LLM
-            if len(clean_text) <= 1:
-                self.q.put(("done", run_id, batch, [src_text], False))
+            if isinstance(self.translator.client, GoogleFreeClient):
+                # まとめ訳：同じ原文は 1 回だけ送る
+                uniq = list(dict.fromkeys(self.units[i]["src"] for i in todo))
+                self._throttle()
+                try:
+                    outs = dict(zip(uniq, self.translator.translate_mt_bulk(uniq, self.cancel_ev)))
+                except LLMError as e:
+                    if "Отменено" in str(e):
+                        self.q.put(("stop", run_id))
+                        return
+                    self.q.put(("done", run_id, todo, [self.units[i]["src"] for i in todo], True))
+                    self.q.put(("log", "err", _tx(f"Ошибка: {e}", f"エラー: {e}")))
+                    continue
+                except Exception as e:
+                    self.q.put(("done", run_id, todo, [self.units[i]["src"] for i in todo], True))
+                    self.q.put(("log", "err", f"{type(e).__name__}: {e}"))
+                    continue
+                for s, r in outs.items():
+                    self.translation_cache[hashlib.md5(s.encode("utf-8")).hexdigest()] = r
+                self.q.put(("done", run_id, todo, [outs[self.units[i]["src"]] for i in todo], False))
                 continue
-            # 既に翻訳先の言語（例: かな・漢字を含む）なら LLM に送らない。キャッシュより先に判定
-            # するので、過去に誤訳されてキャッシュに残った結果も使われない。
-            if already_in_target(src_text, self.cfg.get("target", ""), self.cfg.get("source", "en")):
-                self.q.put(("done", run_id, batch, [src_text], False))
-                continue
-            # -----------------------------------------------
-            
-            # Создаем уникальный хэш (отпечаток) для строки
-            cache_key = hashlib.md5(src_text.encode("utf-8")).hexdigest()
-            
-            # ПРОВЕРКА КЭША: если строка уже переводилась, берем готовое
-            if cache_key in self.translation_cache:
-                res = self.translation_cache[cache_key]
-                self.q.put(("done", run_id, batch, [res], False))
-                continue # Мгновенно переходим к следующей строке
-                
-            try:
-                res = self.translator.translate_single(src_text, self.cancel_ev, context=file_context)
-                self.translation_cache[cache_key] = res
-                self.q.put(("done", run_id, batch, [res], False))
-            except LLMError as e:
-                if "Отменено" in str(e):
+
+            for i in todo:
+                if self.run_id != run_id:
+                    return
+                if self.cancel_ev.is_set():
                     self.q.put(("stop", run_id))
                     return
-                self.q.put(("done", run_id, batch, [src_text], True))
-                self.q.put(("log", "err", _tx(f"Ошибка: {e}", f"エラー: {e}")))
-            except Exception as e:
-                self.q.put(("done", run_id, batch, [src_text], True))
-                self.q.put(("log", "err", f"{type(e).__name__}: {e}"))
+                src_text = self.units[i]["src"]
+                self._throttle()
+                try:
+                    res = self.translator.translate_single(src_text, self.cancel_ev, context=self.units[i].get("rel", ""))
+                    self.translation_cache[hashlib.md5(src_text.encode("utf-8")).hexdigest()] = res
+                    self.q.put(("done", run_id, [i], [res], False))
+                except LLMError as e:
+                    if "Отменено" in str(e):
+                        self.q.put(("stop", run_id))
+                        return
+                    self.q.put(("done", run_id, [i], [src_text], True))
+                    self.q.put(("log", "err", _tx(f"Ошибка: {e}", f"エラー: {e}")))
+                except Exception as e:
+                    self.q.put(("done", run_id, [i], [src_text], True))
+                    self.q.put(("log", "err", f"{type(e).__name__}: {e}"))
 
     def _fill_preview(self):
         self._loading_preview = True
@@ -7221,8 +7348,7 @@ class TranslationDialog(QtWidgets.QDialog):
         self._log("warn", _tx(f"Выборочный перевод {len(idxs)} строк · {self.cfg['backend']} · потоков {self.cfg['threads']}...", f"選択した {len(idxs)} 行を翻訳 · {self.cfg['backend']} · スレッド {self.cfg['threads']}..."))
         
         # 5. Создаем пакеты только из выбранных строк
-        batch_size = self.cfg.get("batch_size", 1)
-        batches = [idxs[i:i + batch_size] for i in range(0, len(idxs), batch_size)]
+        batches = self._job_batches(idxs)
         
         self.job_q = queue.Queue()
         for b in batches:
